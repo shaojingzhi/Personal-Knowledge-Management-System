@@ -65,6 +65,7 @@ After installing the package in editable mode, run:
 - `xhs-copilot index-note <note_id>`
 - `xhs-copilot search-similar <query>`
 - `xhs-copilot generate-answers <note_id>`
+- `xhs-copilot store-answer-records <note_id>`
 - `xhs-copilot ingest-telegram-once`
 - or `python -m xhs_interview_answer_copilot.main status`
 
@@ -88,6 +89,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 `xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs similarity retrieval over those indexed questions.
 
 `xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
+
+`xhs-copilot store-answer-records <note_id>` stores generated question-answer records in local vector storage so later retrieval and archival flows can reuse both questions and answers.
 
 `xhs-copilot ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
 

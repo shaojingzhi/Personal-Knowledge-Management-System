@@ -34,6 +34,21 @@ class QuestionVectorRecord:
     embedding_model: str
 
 
+@dataclass(frozen=True)
+class QARecord:
+    record_id: str
+    note_id: str
+    note_url: str
+    title: str
+    question: str
+    short_answer: str
+    long_answer: str
+    markdown_path: str
+    answer_path: str
+    embedding: list[float]
+    embedding_model: str
+
+
 class QuestionVectorStore:
     def __init__(self, sqlite_path: str) -> None:
         self._sqlite_path = Path(sqlite_path)
@@ -56,6 +71,23 @@ class QuestionVectorStore:
                     question TEXT NOT NULL,
                     category TEXT NOT NULL,
                     keywords_json TEXT NOT NULL,
+                    embedding_json TEXT NOT NULL,
+                    embedding_model TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS qa_records (
+                    record_id TEXT PRIMARY KEY,
+                    note_id TEXT NOT NULL,
+                    note_url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    short_answer TEXT NOT NULL,
+                    long_answer TEXT NOT NULL,
+                    markdown_path TEXT NOT NULL,
+                    answer_path TEXT NOT NULL,
                     embedding_json TEXT NOT NULL,
                     embedding_model TEXT NOT NULL
                 )
@@ -95,6 +127,45 @@ class QuestionVectorStore:
         with self._connect() as connection:
             connection.execute(
                 "DELETE FROM question_vectors WHERE note_id = ?",
+                (note_id,),
+            )
+            return connection.total_changes
+
+    def upsert_qa_records(self, records: list[QARecord]) -> int:
+        if not records:
+            return 0
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO qa_records (
+                    record_id, note_id, note_url, title, question,
+                    short_answer, long_answer, markdown_path, answer_path,
+                    embedding_json, embedding_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        record.record_id,
+                        record.note_id,
+                        record.note_url,
+                        record.title,
+                        record.question,
+                        record.short_answer,
+                        record.long_answer,
+                        record.markdown_path,
+                        record.answer_path,
+                        json.dumps(record.embedding),
+                        record.embedding_model,
+                    )
+                    for record in records
+                ],
+            )
+            return connection.total_changes
+
+    def delete_qa_by_note(self, note_id: str) -> int:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM qa_records WHERE note_id = ?",
                 (note_id,),
             )
             return connection.total_changes

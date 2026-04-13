@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-answers", help="Generate RAG-based answers for one normalized note"
     )
     answer_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    store_answers_parser = subparsers.add_parser(
+        "store-answer-records",
+        help="Store generated question-answer records into vector storage",
+    )
+    store_answers_parser.add_argument("note_id", help="The processed bundle id")
     subparsers.add_parser(
         "ingest-telegram-once",
         help="Fetch Telegram updates once and persist raw message bundles",
@@ -206,6 +211,26 @@ def main() -> None:
         print(f"reason={reason}")
         print(f"answer_path={answer_path}")
         print(f"markdown_path={markdown_path}")
+        return
+
+    if args.command == "store-answer-records":
+        from xhs_interview_answer_copilot.storage.answer_artifact_store import (
+            AnswerArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+        from xhs_interview_answer_copilot.workflows.store_answer_records_workflow import (
+            StoreAnswerRecordsWorkflow,
+        )
+
+        workflow = StoreAnswerRecordsWorkflow(
+            settings=settings,
+            answer_store=AnswerArtifactStore(output_dir=settings.output_dir),
+            vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+        )
+        success, reason, stored_count = workflow.run(args.note_id)
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"stored_count={stored_count}")
         return
 
     if args.command == "ingest-telegram-once":
