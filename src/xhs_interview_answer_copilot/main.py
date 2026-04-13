@@ -48,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reply_parser.add_argument("note_id", help="The processed bundle id")
     subparsers.add_parser(
+        "process-telegram-once",
+        help="Ingest Telegram once and run the full LangGraph text pipeline automatically",
+    )
+    subparsers.add_parser(
         "ingest-telegram-once",
         help="Fetch Telegram updates once and persist raw message bundles",
     )
@@ -258,6 +262,18 @@ def main() -> None:
         print(f"message_id={result.message_id}")
         return
 
+    if args.command == "process-telegram-once":
+        from xhs_interview_answer_copilot.workflows.process_telegram_once_workflow import (
+            ProcessTelegramOnceWorkflow,
+        )
+
+        workflow = ProcessTelegramOnceWorkflow(settings=settings)
+        success, reason, processed = workflow.run_once()
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"processed_bundles={processed}")
+        return
+
     if args.command == "ingest-telegram-once":
         from xhs_interview_answer_copilot.collectors.telegram_ingestor import (
             TelegramIngestor,
@@ -275,6 +291,7 @@ def main() -> None:
         result = ingestor.ingest_once()
         print(f"processed_updates={result.processed_updates}")
         print(f"saved_bundles={result.saved_bundles}")
+        print(f"bundle_ids={result.bundle_ids}")
         print(f"reason={result.reason}")
         return
 

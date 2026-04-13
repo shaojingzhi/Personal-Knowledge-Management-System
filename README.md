@@ -67,6 +67,7 @@ After installing the package in editable mode, run:
 - `xhs-copilot generate-answers <note_id>`
 - `xhs-copilot store-answer-records <note_id>`
 - `xhs-copilot reply-telegram <note_id>`
+- `xhs-copilot process-telegram-once`
 - `xhs-copilot ingest-telegram-once`
 - or `python -m xhs_interview_answer_copilot.main status`
 
@@ -94,6 +95,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 `xhs-copilot store-answer-records <note_id>` stores generated question-answer records in local vector storage so later retrieval and archival flows can reuse both questions and answers.
 
 `xhs-copilot reply-telegram <note_id>` sends a concise text reply built from the generated answers back to the configured Telegram chat.
+
+`xhs-copilot process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
 
 `xhs-copilot ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
 

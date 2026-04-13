@@ -16,6 +16,7 @@ from xhs_interview_answer_copilot.workflows.schemas import SourceBundle, SourceL
 class TelegramIngestResult:
     processed_updates: int
     saved_bundles: int
+    bundle_ids: list[str]
     reason: str
 
 
@@ -40,17 +41,18 @@ class TelegramIngestor:
 
     def ingest_once(self) -> TelegramIngestResult:
         if self._settings.telegram_bot_token is None:
-            return TelegramIngestResult(0, 0, "TELEGRAM_BOT_TOKEN is not configured.")
+            return TelegramIngestResult(0, 0, [], "TELEGRAM_BOT_TOKEN is not configured.")
 
         last_update_id = self._state_store.get_last_update_id()
         offset = None if last_update_id is None else last_update_id + 1
         try:
             updates = self._get_updates(offset=offset)
         except Exception as exc:
-            return TelegramIngestResult(0, 0, f"Telegram ingestion failed: {exc}")
+            return TelegramIngestResult(0, 0, [], f"Telegram ingestion failed: {exc}")
 
         processed_updates = 0
         saved_bundles = 0
+        bundle_ids: list[str] = []
         max_update_id = last_update_id
         for update in updates:
             processed_updates += 1
@@ -77,10 +79,16 @@ class TelegramIngestor:
                 payload=bundle.model_dump(mode="json"),
             )
             saved_bundles += 1
+            bundle_ids.append(bundle_id)
 
         if max_update_id is not None:
             self._state_store.set_last_update_id(max_update_id)
-        return TelegramIngestResult(processed_updates, saved_bundles, "Telegram ingestion completed.")
+        return TelegramIngestResult(
+            processed_updates,
+            saved_bundles,
+            bundle_ids,
+            "Telegram ingestion completed.",
+        )
 
     def _get_updates(self, offset: int | None) -> list[dict[str, Any]]:
         response = self._session.get(
