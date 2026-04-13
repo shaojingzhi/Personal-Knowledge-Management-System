@@ -55,6 +55,7 @@ class Settings:
     openai_proxy_url: str | None
     openai_timeout_seconds: int
     normalize_model: str
+    vision_model: str
     embedding_model: str
     answer_model: str
     retrieval_top_k: int
@@ -85,6 +86,7 @@ def load_settings() -> Settings:
         openai_proxy_url=_read_optional_env("OPENAI_PROXY_URL"),
         openai_timeout_seconds=_read_int_env("OPENAI_TIMEOUT_SECONDS", 60),
         normalize_model=os.getenv("NORMALIZE_MODEL", "gpt-4.1-mini"),
+        vision_model=os.getenv("VISION_MODEL", os.getenv("NORMALIZE_MODEL", "gpt-4.1-mini")),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         answer_model=os.getenv("ANSWER_MODEL", "gpt-4.1-mini"),
         retrieval_top_k=_read_int_env("RETRIEVAL_TOP_K", 3),

@@ -42,6 +42,7 @@ Bootstrap-stage environment variables:
 - `OPENAI_PROXY_URL`
 - `OPENAI_TIMEOUT_SECONDS`
 - `NORMALIZE_MODEL`
+- `VISION_MODEL`
 - `EMBEDDING_MODEL`
 - `ANSWER_MODEL`
 - `RETRIEVAL_TOP_K`
@@ -107,3 +108,5 @@ If `api.telegram.org` is blocked in your network, set `TELEGRAM_PROXY_URL` to an
 If model requests need the same proxy, set `OPENAI_PROXY_URL` such as `http://127.0.0.1:7890`. You can also adjust `OPENAI_TIMEOUT_SECONDS` for slower model responses.
 
 For quick local testing when your endpoint does not provide embeddings, set `EMBEDDING_MODEL=local-hash-v1` to use a deterministic local hash embedding fallback.
+
+If your endpoint supports multimodal input, set `VISION_MODEL` to a compatible model name so screenshot assets can be converted into text during normalization.
