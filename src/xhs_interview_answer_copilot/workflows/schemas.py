@@ -71,6 +71,10 @@ class GeneratedAnswerItem(BaseModel):
     question: str = Field(description="The normalized target interview question.")
     short_answer: str = Field(description="One concise review-friendly answer.")
     long_answer: str = Field(description="A fuller interview-ready answer in 3-5 sentences.")
+    code: str = Field(
+        default="",
+        description="Python reference implementation for algorithm questions; empty for non-algorithm questions.",
+    )
     source_ids: list[str] = Field(
         default_factory=list,
         description="Retrieved source ids actually used for grounding.",

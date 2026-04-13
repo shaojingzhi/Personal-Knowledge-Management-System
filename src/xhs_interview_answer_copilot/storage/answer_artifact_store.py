@@ -40,3 +40,9 @@ class AnswerArtifactStore:
 
     def get_answer_markdown_path(self, note_id: str) -> Path:
         return self._output_dir / note_id / "answer.md"
+
+    def load_markdown(self, note_id: str) -> str | None:
+        markdown_path = self.get_answer_markdown_path(note_id)
+        if not markdown_path.exists():
+            return None
+        return markdown_path.read_text(encoding="utf-8")

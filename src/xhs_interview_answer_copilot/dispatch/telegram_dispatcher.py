@@ -15,6 +15,7 @@ class TelegramDispatchResult:
     success: bool
     reason: str
     message_id: int | None
+    sent_count: int = 0
 
 
 class TelegramDispatcher:
@@ -43,33 +44,53 @@ class TelegramDispatcher:
         try:
             answer_set = self._answer_store.load_answers(note_id)
         except Exception as exc:
-            return TelegramDispatchResult(False, f"Failed to load answer set: {exc}", None)
+            return TelegramDispatchResult(False, f"Failed to load answer set: {exc}", None, 0)
         if answer_set is None:
-            return TelegramDispatchResult(False, f"Answer set not found for note_id: {note_id}", None)
+            return TelegramDispatchResult(False, f"Answer set not found for note_id: {note_id}", None, 0)
 
-        text = self._build_reply_text(answer_set)
-        payload = {
-            "chat_id": self._settings.telegram_chat_id,
-            "text": text,
-            "disable_web_page_preview": "true",
-        }
+        markdown_text = self._answer_store.load_markdown(note_id)
+        text = self._build_full_reply_text(markdown_text) if markdown_text else self._build_reply_text(answer_set)
+        chunks = self._split_text(text)
         reply_to_message_id = self._read_reply_target(note_id)
-        if reply_to_message_id is not None:
-            payload["reply_to_message_id"] = str(reply_to_message_id)
+        first_message_id: int | None = None
+        sent_count = 0
         try:
-            response = self._session.post(
-                self._api_url("sendMessage"),
-                data=payload,
-                timeout=60,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            if not payload.get("ok"):
-                return TelegramDispatchResult(False, f"Telegram sendMessage failed: {payload}", None)
-            message_id = payload.get("result", {}).get("message_id")
-            return TelegramDispatchResult(True, "Telegram reply sent.", message_id)
+            current_reply_target = reply_to_message_id
+            for chunk in chunks:
+                payload = {
+                    "chat_id": self._settings.telegram_chat_id,
+                    "text": chunk,
+                    "disable_web_page_preview": "true",
+                }
+                if current_reply_target is not None:
+                    payload["reply_to_message_id"] = str(current_reply_target)
+                response = self._session.post(
+                    self._api_url("sendMessage"),
+                    data=payload,
+                    timeout=60,
+                )
+                response.raise_for_status()
+                response_payload = response.json()
+                if not response_payload.get("ok"):
+                    return TelegramDispatchResult(
+                        False,
+                        f"Telegram sendMessage failed: {response_payload}",
+                        first_message_id,
+                        sent_count,
+                    )
+                sent_count += 1
+                message_id = response_payload.get("result", {}).get("message_id")
+                if first_message_id is None and isinstance(message_id, int):
+                    first_message_id = message_id
+                current_reply_target = message_id if isinstance(message_id, int) else current_reply_target
+            return TelegramDispatchResult(True, "Telegram reply sent.", first_message_id, sent_count)
         except Exception as exc:
-            return TelegramDispatchResult(False, f"Telegram reply failed: {exc}", None)
+            return TelegramDispatchResult(
+                False,
+                f"Telegram reply failed: {exc}",
+                first_message_id,
+                sent_count,
+            )
 
     def _build_reply_text(self, answer_set: GeneratedAnswerSet) -> str:
         lines = [
@@ -87,6 +108,49 @@ class TelegramDispatcher:
             )
         text = "\n".join(lines).strip()
         return text[:3500]
+
+    def _build_full_reply_text(self, markdown_text: str) -> str:
+        filtered_lines: list[str] = []
+        skip_next_blank_after_grounding = False
+        for line in markdown_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- Source ID:") or stripped.startswith("- Source URL:"):
+                continue
+            if stripped == "**Grounding Source IDs**":
+                skip_next_blank_after_grounding = True
+                continue
+            if skip_next_blank_after_grounding:
+                if not stripped:
+                    continue
+                if stripped.startswith("`"):
+                    continue
+                skip_next_blank_after_grounding = False
+            filtered_lines.append(line)
+        return "\n".join(filtered_lines).strip()
+
+    def _split_text(self, text: str, limit: int = 3200) -> list[str]:
+        if len(text) <= limit:
+            return [text]
+        chunks: list[str] = []
+        current = ""
+        for block in text.split("\n\n"):
+            candidate = block if not current else f"{current}\n\n{block}"
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+            if len(block) <= limit:
+                current = block
+                continue
+            start = 0
+            while start < len(block):
+                chunks.append(block[start : start + limit])
+                start += limit
+            current = ""
+        if current:
+            chunks.append(current)
+        return chunks
 
     def _api_url(self, method: str) -> str:
         return f"{self._settings.telegram_api_base}/bot{self._settings.telegram_bot_token}/{method}"

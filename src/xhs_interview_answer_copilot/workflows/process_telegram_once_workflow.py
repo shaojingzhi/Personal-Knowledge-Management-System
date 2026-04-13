@@ -29,6 +29,7 @@ class BundleProcessState(TypedDict):
     markdown_path: NotRequired[str]
     stored_count: NotRequired[int]
     reply_message_id: NotRequired[int]
+    reply_partial: NotRequired[bool]
 
 
 class ProcessTelegramOnceWorkflow:
@@ -57,7 +58,8 @@ class ProcessTelegramOnceWorkflow:
         for bundle_id in ingest_result.bundle_ids:
             success, reason = self._process_bundle(bundle_id)
             if not success:
-                self._restore_offset(previous_update_id, bundle_id)
+                if "partial telegram reply" not in reason.lower():
+                    self._restore_offset(previous_update_id, bundle_id)
                 return False, f"{bundle_id}: {reason}", processed
             processed.append(bundle_id)
         return True, "Telegram processing completed.", processed
@@ -99,9 +101,11 @@ class ProcessTelegramOnceWorkflow:
         app = graph.compile()
 
         try:
-            app.invoke({"bundle_id": bundle_id})
+            result = app.invoke({"bundle_id": bundle_id})
         except Exception as exc:
             return False, f"Automatic processing failed: {exc}"
+        if result.get("reply_partial"):
+            return False, "Partial Telegram reply sent."
         return True, "Processed bundle successfully."
 
     def _normalize_node(self, state: BundleProcessState) -> dict[str, object]:
@@ -160,5 +164,10 @@ class ProcessTelegramOnceWorkflow:
         )
         result = dispatcher.reply_answers(state["bundle_id"])
         if not result.success:
+            if result.sent_count > 0:
+                return {
+                    "reply_message_id": result.message_id or 0,
+                    "reply_partial": True,
+                }
             raise RuntimeError(result.reason)
         return {"reply_message_id": result.message_id or 0}

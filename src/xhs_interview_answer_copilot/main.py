@@ -260,6 +260,7 @@ def main() -> None:
         print(f"success={result.success}")
         print(f"reason={result.reason}")
         print(f"message_id={result.message_id}")
+        print(f"sent_count={result.sent_count}")
         return
 
     if args.command == "process-telegram-once":

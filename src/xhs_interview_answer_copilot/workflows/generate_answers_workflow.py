@@ -112,7 +112,7 @@ class GenerateAnswersWorkflow:
             [
                 (
                     "system",
-                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage.",
+                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage. If a question is algorithmic, include a Python reference implementation in the code field. For non-algorithm questions, leave the code field empty.",
                 ),
                 (
                     "human",
@@ -190,6 +190,17 @@ class GenerateAnswersWorkflow:
                     "",
                 ]
             )
+            if answer.code.strip():
+                lines.extend(
+                    [
+                        "**Python Reference Code**",
+                        "",
+                        "```python",
+                        answer.code,
+                        "```",
+                        "",
+                    ]
+                )
             if answer.source_ids:
                 lines.extend(
                     [
