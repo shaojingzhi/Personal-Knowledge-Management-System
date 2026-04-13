@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Store generated question-answer records into vector storage",
     )
     store_answers_parser.add_argument("note_id", help="The processed bundle id")
+    reply_parser = subparsers.add_parser(
+        "reply-telegram",
+        help="Send generated answer text back to Telegram",
+    )
+    reply_parser.add_argument("note_id", help="The processed bundle id")
     subparsers.add_parser(
         "ingest-telegram-once",
         help="Fetch Telegram updates once and persist raw message bundles",
@@ -231,6 +236,26 @@ def main() -> None:
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"stored_count={stored_count}")
+        return
+
+    if args.command == "reply-telegram":
+        from xhs_interview_answer_copilot.dispatch.telegram_dispatcher import (
+            TelegramDispatcher,
+        )
+        from xhs_interview_answer_copilot.storage.answer_artifact_store import (
+            AnswerArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
+
+        dispatcher = TelegramDispatcher(
+            settings=settings,
+            answer_store=AnswerArtifactStore(output_dir=settings.output_dir),
+            raw_store=RawArtifactStore(output_dir=settings.output_dir),
+        )
+        result = dispatcher.reply_answers(args.note_id)
+        print(f"success={result.success}")
+        print(f"reason={result.reason}")
+        print(f"message_id={result.message_id}")
         return
 
     if args.command == "ingest-telegram-once":
