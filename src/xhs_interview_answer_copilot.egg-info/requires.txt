@@ -1,0 +1,9 @@
+langchain-core<0.4,>=0.3
+langchain-openai<0.4,>=0.3
+langgraph<0.4,>=0.2
+playwright<2,>=1.52
+pydantic<3,>=2.7
+pydantic-settings<3,>=2.2
+
+[dev]
+mypy<2,>=1.10

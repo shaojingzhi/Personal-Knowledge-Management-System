@@ -1,0 +1,177 @@
+{
+  "project": "XHS Interview Answer Copilot",
+  "branchName": "ralph/xhs-telegram-sourcebundle-core-and-optional",
+  "description": "Build a Telegram-first automation system that stores Xiaohongshu interview source bundles, normalizes them into questions, retrieves similar historical questions, generates detailed and concise answers, and keeps optional OCR, web enrichment, and extra source adapters as later work.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Bootstrap Python project skeleton",
+      "description": "As the developer, I want a typed Python project skeleton with config loading so that the automation service has a maintainable foundation.",
+      "acceptanceCriteria": [
+        "Project includes Python package structure for ingestion, workflows, storage, and dispatch modules",
+        "Configuration loads from environment variables with documented required keys",
+        "A CLI entry point or main module starts without Telegram polling enabled",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Core scope. Use Python, LangGraph, SQLite, and Telegram-oriented layout for future stories."
+    },
+    {
+      "id": "US-002",
+      "title": "Ingest Telegram links and media",
+      "description": "As the user, I want to send Xiaohongshu links, screenshots, or copied text to a Telegram Bot so that interview posts can enter the pipeline from my phone.",
+      "acceptanceCriteria": [
+        "Telegram intake accepts plain text, links, photos, and captions from the configured user or chat",
+        "Ingestion extracts message metadata needed to track source, time, and sender context",
+        "Core ingestion stores screenshot-heavy bundles even before OCR or multimodal reading is implemented",
+        "Unsupported message shapes fail clearly instead of crashing the bot loop",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Core scope. Telegram becomes the primary ingestion path for MVP reliability."
+    },
+    {
+      "id": "US-003",
+      "title": "Persist raw Telegram bundles",
+      "description": "As the system, I want to store raw Telegram message payloads and attachments locally so that later extraction steps have replayable inputs.",
+      "acceptanceCriteria": [
+        "Each ingested Telegram message is stored as a deterministic raw artifact bundle",
+        "Downloaded photos or documents are saved alongside raw metadata when present",
+        "Raw bundles include enough metadata to trace back to the original Telegram message",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Core scope. Keep raw artifacts easy to replay and inspect during prompt iteration."
+    },
+    {
+      "id": "US-004",
+      "title": "Normalize text-first source bundles",
+      "description": "As the user, I want text-first source bundles transformed into structured interview questions so that answer generation is focused and reusable.",
+      "acceptanceCriteria": [
+        "LangGraph workflow accepts a shared SourceBundle input and outputs a typed normalized JSON document",
+        "Normalization handles Telegram text-first bundles without requiring reachable Xiaohongshu web pages",
+        "Normalization filters obvious non-interview noise from the source content",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Core scope. Keep the first end-to-end path text-first and stable."
+    },
+    {
+      "id": "US-005",
+      "title": "Index normalized questions into vector storage",
+      "description": "As the user, I want normalized interview questions stored in a vector index so that similar historical questions can be reused later.",
+      "acceptanceCriteria": [
+        "Normalized question records can be embedded and stored with bundle metadata in a configured vector store",
+        "Indexing skips malformed or empty question content without crashing the pipeline",
+        "Indexed records keep enough metadata to exclude the current source and question during retrieval",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Core scope. Keep the vector layer lightweight and local-first."
+    },
+    {
+      "id": "US-006",
+      "title": "Generate detailed and concise answers",
+      "description": "As the user, I want both detailed and concise answers for each extracted question, augmented by similar prior questions when available, so that I can study deeply or review quickly.",
+      "acceptanceCriteria": [
+        "Generation step retrieves similar indexed questions before generating answers while excluding the current source and question",
+        "Generation step consumes normalized question data plus retrieved context and produces a detailed answer set",
+        "Generation step produces a concise review version suitable for mobile reading",
+        "Generated outputs are typed and persisted independently from raw source content",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Core scope. Use LangGraph for retrieval plus generation."
+    },
+    {
+      "id": "US-007",
+      "title": "Persist local JSON and Markdown artifacts",
+      "description": "As the user, I want processed outputs saved locally as JSON and Markdown so that I can inspect and review them outside Telegram.",
+      "acceptanceCriteria": [
+        "Service writes deterministic per-bundle JSON artifacts for raw, normalized, and generated outputs",
+        "Service writes a Markdown artifact suitable for quick reading and review",
+        "Artifact generation does not depend on Telegram delivery succeeding",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Core scope. Local artifacts are the primary debugging and review surface."
+    },
+    {
+      "id": "US-008",
+      "title": "Persist artifacts and reply on Telegram",
+      "description": "As the user, I want processed results saved locally and sent back to Telegram so that I can review content on desktop and mobile.",
+      "acceptanceCriteria": [
+        "Telegram dispatcher sends a summary containing source title, extracted question count, and concise answers",
+        "Telegram reply uses previously generated local artifacts rather than regenerating them inline",
+        "Dispatcher records success or failure status for each outbound message",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Core scope. Telegram is both the primary ingestion and delivery channel in phase one."
+    },
+    {
+      "id": "US-009",
+      "title": "Add OCR or multimodal media extraction",
+      "description": "As the user, I want screenshot-heavy bundles to be readable so that image-first interview posts can also enter the same normalization path.",
+      "acceptanceCriteria": [
+        "Downloaded Telegram assets can be converted into text with OCR or multimodal models",
+        "Media-derived text can be merged into the same SourceBundle-driven normalization path",
+        "Media extraction failures are surfaced clearly without corrupting the original raw bundle",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Optional scope. Needed for image-first real-world usage, but not for the first text-first end-to-end path."
+    },
+    {
+      "id": "US-010",
+      "title": "Add optional web-side enrichment",
+      "description": "As the user, I want reachable Xiaohongshu links to contribute extra metadata when available so that the pipeline can improve output quality without depending on web access.",
+      "acceptanceCriteria": [
+        "Optional web-side enrichment can fetch reachable metadata for shared Xiaohongshu links",
+        "The pipeline still succeeds when a shared link is blocked, rate-limited, or inaccessible on the web",
+        "Web enrichment failures are recorded clearly for debugging",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Optional scope. Keep web access as a best-effort enhancer rather than a hard dependency."
+    },
+    {
+      "id": "US-011",
+      "title": "Add bot-loop orchestration and retries",
+      "description": "As the developer, I want a continuous bot loop with retries and task tracking so that the service can run reliably beyond manual one-shot commands.",
+      "acceptanceCriteria": [
+        "A bot loop or scheduler can process Telegram updates continuously or on a controlled interval",
+        "Task records track ingestion, normalization, indexing, generation, and dispatch states",
+        "Transient failures can be retried without duplicating successful outputs",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "Optional scope. Reliability layer after the first manual end-to-end path is stable."
+    },
+    {
+      "id": "US-012",
+      "title": "Add Feishu source adapter",
+      "description": "As the user, I want Feishu messages to enter the same pipeline so that another collaboration tool can reuse the SourceBundle-based workflow.",
+      "acceptanceCriteria": [
+        "Feishu inbound events can be mapped into the shared SourceBundle schema",
+        "Feishu-derived bundles can reuse existing normalization, indexing, and generation flows without source-specific redesign",
+        "Adapter-specific metadata is preserved for debugging",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Optional scope. Validates that SourceBundle truly supports multi-source expansion."
+    }
+  ]
+}

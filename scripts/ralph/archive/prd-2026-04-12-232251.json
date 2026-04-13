@@ -1,0 +1,148 @@
+{
+  "project": "XHS Interview Answer Copilot",
+  "branchName": "ralph/xhs-mobile-ingest-rag-mvp",
+  "description": "Build a personal automation system that ingests Xiaohongshu interview posts from Telegram messages, extracts text and image content, retrieves similar historical questions from a vector store, generates detailed and concise interview answers, stores results locally, and pushes summaries back to Telegram.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Bootstrap Python project skeleton",
+      "description": "As the developer, I want a typed Python project skeleton with config loading so that the automation service has a maintainable foundation.",
+      "acceptanceCriteria": [
+        "Project includes Python package structure for ingestion, workflows, storage, and dispatch modules",
+        "Configuration loads from environment variables with documented required keys",
+        "A CLI entry point or main module starts without Telegram polling enabled",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Use Python, LangGraph, SQLite, and Telegram-oriented layout for future stories."
+    },
+    {
+      "id": "US-002",
+      "title": "Ingest Telegram links and media",
+      "description": "As the user, I want to send Xiaohongshu links, screenshots, or copied text to a Telegram Bot so that interview posts can enter the pipeline from my phone.",
+      "acceptanceCriteria": [
+        "Telegram intake accepts plain text, links, photos, and captions from the configured user or chat",
+        "Ingestion extracts message metadata needed to track source, time, and sender context",
+        "Unsupported message shapes fail clearly instead of crashing the bot loop",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Telegram becomes the primary ingestion path for MVP reliability."
+    },
+    {
+      "id": "US-003",
+      "title": "Persist raw Telegram bundles",
+      "description": "As the system, I want to store raw Telegram message payloads and attachments locally so that later extraction steps have replayable inputs.",
+      "acceptanceCriteria": [
+        "Each ingested Telegram message is stored as a deterministic raw artifact bundle",
+        "Downloaded photos or documents are saved alongside raw metadata when present",
+        "Raw bundles include enough metadata to trace back to the original Telegram message",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Keep raw artifacts easy to replay and inspect during prompt iteration."
+    },
+    {
+      "id": "US-004",
+      "title": "Extract multimodal source text",
+      "description": "As the user, I want screenshots, copied text, and optional reachable web metadata converted into source text so that image-heavy interview posts can be processed reliably.",
+      "acceptanceCriteria": [
+        "Extraction merges Telegram text, captions, and OCR or multimodal image results into one source document",
+        "Reachable web links can optionally contribute metadata without being required for success",
+        "Extraction fails clearly when there is not enough usable content to continue",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Do not make web scraping a hard dependency for successful ingestion."
+    },
+    {
+      "id": "US-005",
+      "title": "Normalize source content into questions",
+      "description": "As the user, I want noisy source material transformed into structured interview questions so that answer generation is focused and reusable.",
+      "acceptanceCriteria": [
+        "LangGraph workflow outputs a typed normalized JSON document containing question list, tags, and contextual metadata",
+        "Normalization filters obvious non-interview noise from the source content",
+        "Normalization preserves stable source identifiers for later retrieval and answer generation",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Use LangGraph node structure and Pydantic output models."
+    },
+    {
+      "id": "US-006",
+      "title": "Index normalized questions into vector storage",
+      "description": "As the user, I want normalized interview questions stored in a vector index so that similar historical questions can be reused later.",
+      "acceptanceCriteria": [
+        "Normalized question records can be embedded and stored with message or note metadata in a configured vector store",
+        "Indexing skips malformed or empty question content without crashing the pipeline",
+        "Indexed records keep enough metadata to exclude the current source and question during retrieval",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Keep the vector layer lightweight and local-first so it remains easy to swap later."
+    },
+    {
+      "id": "US-007",
+      "title": "Generate detailed and concise answers",
+      "description": "As the user, I want both detailed and concise answers for each extracted question, augmented by similar prior questions when available, so that I can study deeply or review quickly.",
+      "acceptanceCriteria": [
+        "Generation step retrieves similar indexed questions before generating answers while excluding the current source and question",
+        "Generation step consumes normalized question data plus retrieved context and produces a detailed answer set",
+        "Generation step produces a concise review version suitable for mobile reading",
+        "Generated outputs are typed and persisted independently from raw source content",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Use LangGraph for retrieval plus generation, while keeping prompts modular to support future provider changes."
+    },
+    {
+      "id": "US-008",
+      "title": "Persist artifacts and reply on Telegram",
+      "description": "As the user, I want processed results saved locally and sent back to Telegram so that I can review content on desktop and mobile.",
+      "acceptanceCriteria": [
+        "Service writes per-source Markdown and JSON outputs to a deterministic local directory structure",
+        "Telegram dispatcher sends a summary containing source title, extracted question count, and concise answers",
+        "Dispatcher records success or failure status for each outbound message",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Telegram is both the primary ingestion and delivery channel in phase one."
+    },
+    {
+      "id": "US-009",
+      "title": "Add scheduler and retryable task tracking",
+      "description": "As the developer, I want scheduled polling, status transitions, and retry handling so that the service can run continuously with observable failures.",
+      "acceptanceCriteria": [
+        "A scheduler or bot loop runs ingestion and processing on a configurable interval or update stream",
+        "Task records track ingestion, extraction, normalization, indexing, generation, dispatch, and failure states",
+        "Transient failures can be retried without duplicating successful outputs",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Model the pipeline as resumable steps for reliability."
+    },
+    {
+      "id": "US-010",
+      "title": "Add optional web-side enrichment",
+      "description": "As the user, I want reachable Xiaohongshu links to contribute extra metadata when available so that the pipeline can improve output quality without depending on web access.",
+      "acceptanceCriteria": [
+        "Optional web-side enrichment can fetch reachable metadata for shared Xiaohongshu links",
+        "The pipeline still succeeds when a shared link is blocked, rate-limited, or inaccessible on the web",
+        "Web enrichment failures are recorded clearly for debugging",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Keep web access as a best-effort enhancer rather than a hard dependency."
+    }
+  ]
+}

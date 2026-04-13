@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xhs-interview-answer-copilot"
+version = "0.1.0"
+description = "Automates extraction and answer generation for favorited Xiaohongshu interview posts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "langchain-core>=0.3,<0.4",
+  "langchain-openai>=0.3,<0.4",
+  "langgraph>=0.2,<0.4",
+  "playwright>=1.52,<2",
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
+  "python-dotenv>=1.0,<2",
+  "requests>=2.32,<3",
+  "httpx>=0.27,<1"
+]
+
+[project.scripts]
+xhs-copilot = "xhs_interview_answer_copilot.main:main"
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["xhs_interview_answer_copilot"]

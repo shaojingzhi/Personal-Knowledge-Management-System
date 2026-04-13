@@ -1,0 +1,96 @@
+Metadata-Version: 2.4
+Name: xhs-interview-answer-copilot
+Version: 0.1.0
+Summary: Automates extraction and answer generation for favorited Xiaohongshu interview posts.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: langchain-core<0.4,>=0.3
+Requires-Dist: langchain-openai<0.4,>=0.3
+Requires-Dist: langgraph<0.4,>=0.2
+Requires-Dist: playwright<2,>=1.52
+Requires-Dist: pydantic<3,>=2.7
+Requires-Dist: pydantic-settings<3,>=2.2
+Provides-Extra: dev
+Requires-Dist: mypy<2,>=1.10; extra == "dev"
+
+# XHS Interview Answer Copilot
+
+Personal automation for turning newly favorited Xiaohongshu interview posts into structured questions and AI-generated answers.
+
+## Planned stack
+
+- Python
+- Playwright
+- LangGraph
+- Pydantic
+- SQLite
+- Telegram Bot API
+
+## Current status
+
+- PRD drafted in `docs/PRD.md`
+- Ralph execution plan drafted in `scripts/ralph/prd.json`
+
+## Package layout
+
+- `src/xhs_interview_answer_copilot/collectors`
+- `src/xhs_interview_answer_copilot/workflows`
+- `src/xhs_interview_answer_copilot/storage`
+- `src/xhs_interview_answer_copilot/dispatch`
+
+## Configuration
+
+Bootstrap-stage environment variables:
+
+- `XHS_BASE_URL`
+- `XHS_PROFILE_DIR`
+- `XHS_FAVORITES_URL`
+- `XHS_FAVORITES_FOLDER_NAME`
+- `XHS_AUTHENTICATED_SELECTOR`
+- `XHS_NOTE_LINK_SELECTOR`
+- `XHS_LOGIN_TIMEOUT_SECONDS`
+- `OUTPUT_DIR`
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `NORMALIZE_MODEL`
+- `EMBEDDING_MODEL`
+- `ANSWER_MODEL`
+- `RETRIEVAL_TOP_K`
+- `RETRIEVAL_MIN_SCORE`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `SQLITE_PATH`
+
+## Run
+
+After installing the package in editable mode, run:
+
+- `xhs-copilot status`
+- `xhs-copilot login`
+- `xhs-copilot healthcheck`
+- `xhs-copilot discover`
+- `xhs-copilot extract-note <note_id>`
+- `xhs-copilot normalize-note <note_id>`
+- `xhs-copilot index-note <note_id>`
+- `xhs-copilot search-similar <query>`
+- `xhs-copilot generate-answers <note_id>`
+- or `python -m xhs_interview_answer_copilot.main status`
+
+## Playwright setup
+
+Install Python dependencies and browser binaries before using login commands:
+
+- `pip install -e .`
+- `playwright install chromium`
+
+`XHS_AUTHENTICATED_SELECTOR` is optional but strongly recommended. If you set it to a selector that is only visible after login, `xhs-copilot login` can wait for it during bootstrap and `xhs-copilot healthcheck` can verify the saved session more reliably. Without it, the login command falls back to manual confirmation and health checks return conservative results when they cannot prove the session is still authenticated.
+
+`XHS_FAVORITES_URL` should point to the exact favorites page you want to scan. `XHS_NOTE_LINK_SELECTOR` defaults to `a` for a minimal MVP and can be narrowed later if the page contains too many unrelated links.
+
+`xhs-copilot extract-note <note_id>` looks up the note URL from the local discovery database and writes a per-note `raw.json` under `OUTPUT_DIR`.
+
+`xhs-copilot normalize-note <note_id>` is the first LangGraph-based step. It loads `raw.json`, calls an LLM through LangChain structured output, and writes `normalized.json` under `OUTPUT_DIR`.
+
+`xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs similarity retrieval over those indexed questions.
+
+`xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.

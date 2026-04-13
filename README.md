@@ -1,0 +1,100 @@
+# XHS Interview Answer Copilot
+
+Personal automation for turning newly favorited Xiaohongshu interview posts into structured questions and AI-generated answers.
+
+## Planned stack
+
+- Python
+- Playwright
+- LangGraph
+- Pydantic
+- SQLite
+- Telegram Bot API
+
+## Current status
+
+- PRD drafted in `docs/PRD.md`
+- Ralph execution plan drafted in `scripts/ralph/prd.json`
+
+## Package layout
+
+- `src/xhs_interview_answer_copilot/collectors`
+- `src/xhs_interview_answer_copilot/workflows`
+- `src/xhs_interview_answer_copilot/storage`
+- `src/xhs_interview_answer_copilot/dispatch`
+
+## Configuration
+
+Bootstrap-stage environment variables:
+
+- `XHS_BASE_URL`
+- `XHS_BROWSER_MODE`
+- `XHS_CDP_URL`
+- `XHS_PROFILE_DIR`
+- `XHS_FAVORITES_URL`
+- `XHS_FAVORITES_FOLDER_NAME`
+- `XHS_AUTHENTICATED_SELECTOR`
+- `XHS_NOTE_LINK_SELECTOR`
+- `XHS_LOGIN_TIMEOUT_SECONDS`
+- `OUTPUT_DIR`
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `OPENAI_PROXY_URL`
+- `OPENAI_TIMEOUT_SECONDS`
+- `NORMALIZE_MODEL`
+- `EMBEDDING_MODEL`
+- `ANSWER_MODEL`
+- `RETRIEVAL_TOP_K`
+- `RETRIEVAL_MIN_SCORE`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_API_BASE`
+- `TELEGRAM_PROXY_URL`
+- `SQLITE_PATH`
+
+## Run
+
+After installing the package in editable mode, run:
+
+- `xhs-copilot status`
+- `xhs-copilot login`
+- `xhs-copilot healthcheck`
+- `xhs-copilot discover`
+- `xhs-copilot extract-note <note_id>`
+- `xhs-copilot normalize-note <note_id>`
+- `xhs-copilot index-note <note_id>`
+- `xhs-copilot search-similar <query>`
+- `xhs-copilot generate-answers <note_id>`
+- `xhs-copilot ingest-telegram-once`
+- or `python -m xhs_interview_answer_copilot.main status`
+
+## Playwright setup
+
+Install Python dependencies and browser binaries before using login commands:
+
+- `pip install -e .`
+- `playwright install chromium`
+
+`XHS_AUTHENTICATED_SELECTOR` is optional but strongly recommended. If you set it to a selector that is only visible after login, `xhs-copilot login` can wait for it during bootstrap and `xhs-copilot healthcheck` can verify the saved session more reliably. Without it, the login command falls back to manual confirmation and health checks return conservative results when they cannot prove the session is still authenticated.
+
+For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with `--remote-debugging-port=9222`, keep your normal Xiaohongshu session logged in there, and set `XHS_CDP_URL=http://127.0.0.1:9222`.
+
+`XHS_FAVORITES_URL` should point to the exact favorites page you want to scan. `XHS_NOTE_LINK_SELECTOR` defaults to `a` for a minimal MVP and can be narrowed later if the page contains too many unrelated links.
+
+`xhs-copilot extract-note <note_id>` looks up the note URL from the local discovery database and writes a per-note `raw.json` under `OUTPUT_DIR`.
+
+`xhs-copilot normalize-note <note_id>` is the first LangGraph-based step. It loads `raw.json` from either a web note bundle or a Telegram bundle, calls an LLM through LangChain structured output, and writes `normalized.json` under `OUTPUT_DIR`.
+
+`xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs similarity retrieval over those indexed questions.
+
+`xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
+
+`xhs-copilot ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
+
+Raw ingestion now trends toward a shared `SourceBundle` shape with explicit `canonical_url`, `text_blocks`, `asset_paths`, and `image_urls`, so Telegram is the first message-driven source and later integrations such as Feishu can target the same normalization entry point.
+
+If `api.telegram.org` is blocked in your network, set `TELEGRAM_PROXY_URL` to an HTTP or HTTPS proxy address such as `http://127.0.0.1:7890`.
+
+If model requests need the same proxy, set `OPENAI_PROXY_URL` such as `http://127.0.0.1:7890`. You can also adjust `OPENAI_TIMEOUT_SECONDS` for slower model responses.
+
+For quick local testing when your endpoint does not provide embeddings, set `EMBEDDING_MODEL=local-hash-v1` to use a deterministic local hash embedding fallback.
