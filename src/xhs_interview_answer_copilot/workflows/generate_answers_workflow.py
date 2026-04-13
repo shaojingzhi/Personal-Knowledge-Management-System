@@ -21,6 +21,7 @@ class AnswerState(TypedDict):
     retrieved_context: NotRequired[dict[str, list[IndexedQuestion]]]
     answer_set: NotRequired[GeneratedAnswerSet]
     answer_path: NotRequired[str]
+    markdown_path: NotRequired[str]
 
 
 class GenerateAnswersWorkflow:
@@ -36,14 +37,14 @@ class GenerateAnswersWorkflow:
         self._vector_store = vector_store
         self._answer_store = answer_store
 
-    def run(self, note_id: str) -> tuple[bool, str, str | None]:
+    def run(self, note_id: str) -> tuple[bool, str, str | None, str | None]:
         normalized_note = self._normalized_store.load_normalized_note(note_id)
         if normalized_note is None:
-            return False, f"Normalized note not found for note_id: {note_id}", None
+            return False, f"Normalized note not found for note_id: {note_id}", None, None
         if not normalized_note.questions:
-            return False, "No normalized questions found for answer generation.", None
+            return False, "No normalized questions found for answer generation.", None, None
         if self._settings.openai_api_key is None and self._settings.openai_base_url is None:
-            return False, "Configure OPENAI_API_KEY or OPENAI_BASE_URL first.", None
+            return False, "Configure OPENAI_API_KEY or OPENAI_BASE_URL first.", None, None
 
         try:
             graph_module = import_module("langgraph.graph")
@@ -62,8 +63,13 @@ class GenerateAnswersWorkflow:
             app = graph.compile()
             result = app.invoke({"note_id": note_id, "normalized_note": normalized_note})
         except Exception as exc:
-            return False, f"Answer generation failed: {exc}", None
-        return True, "Answer generation completed.", result.get("answer_path")
+            return False, f"Answer generation failed: {exc}", None, None
+        return (
+            True,
+            "Answer generation completed.",
+            result.get("answer_path"),
+            result.get("markdown_path"),
+        )
 
     def _retrieve_node(self, state: AnswerState) -> dict[str, object]:
         retriever = QuestionRetriever(self._settings, self._vector_store)
@@ -154,4 +160,43 @@ class GenerateAnswersWorkflow:
             note_id=state["note_id"],
             payload=answer_set.model_dump(mode="json"),
         )
-        return {"answer_path": str(answer_path)}
+        markdown_path = self._answer_store.save_markdown(
+            note_id=state["note_id"],
+            markdown=self._build_markdown(answer_set),
+        )
+        return {"answer_path": str(answer_path), "markdown_path": str(markdown_path)}
+
+    def _build_markdown(self, answer_set: GeneratedAnswerSet) -> str:
+        lines = [
+            f"# {answer_set.title or answer_set.note_id}",
+            "",
+            f"- Source ID: `{answer_set.note_id}`",
+            f"- Source URL: {answer_set.note_url or 'N/A'}",
+            f"- Question Count: {len(answer_set.answers)}",
+            "",
+        ]
+        for index, answer in enumerate(answer_set.answers, start=1):
+            lines.extend(
+                [
+                    f"## Q{index}. {answer.question}",
+                    "",
+                    "**Short Answer**",
+                    "",
+                    answer.short_answer,
+                    "",
+                    "**Detailed Answer**",
+                    "",
+                    answer.long_answer,
+                    "",
+                ]
+            )
+            if answer.source_ids:
+                lines.extend(
+                    [
+                        "**Grounding Source IDs**",
+                        "",
+                        ", ".join(f"`{source_id}`" for source_id in answer.source_ids),
+                        "",
+                    ]
+                )
+        return "\n".join(lines).strip() + "\n"

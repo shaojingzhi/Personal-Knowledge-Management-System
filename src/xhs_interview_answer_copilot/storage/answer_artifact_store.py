@@ -19,3 +19,10 @@ class AnswerArtifactStore:
             encoding="utf-8",
         )
         return answer_path
+
+    def save_markdown(self, note_id: str, markdown: str) -> Path:
+        note_dir = self._output_dir / note_id
+        note_dir.mkdir(parents=True, exist_ok=True)
+        markdown_path = note_dir / "answer.md"
+        markdown_path.write_text(markdown, encoding="utf-8")
+        return markdown_path

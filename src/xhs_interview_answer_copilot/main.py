@@ -201,10 +201,11 @@ def main() -> None:
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
             answer_store=AnswerArtifactStore(output_dir=settings.output_dir),
         )
-        success, reason, answer_path = workflow.run(args.note_id)
+        success, reason, answer_path, markdown_path = workflow.run(args.note_id)
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"answer_path={answer_path}")
+        print(f"markdown_path={markdown_path}")
         return
 
     if args.command == "ingest-telegram-once":
