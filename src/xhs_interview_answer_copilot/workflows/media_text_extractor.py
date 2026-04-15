@@ -11,6 +11,17 @@ from xhs_interview_answer_copilot.config import Settings
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 
 
+def _looks_like_low_quality_ocr(text: str) -> bool:
+    compact = "".join(character for character in text if not character.isspace())
+    if not compact:
+        return True
+    alpha_numeric_count = sum(character.isalnum() for character in compact)
+    if alpha_numeric_count == 0:
+        return True
+    useful_ratio = alpha_numeric_count / len(compact)
+    return len(compact) >= 12 and useful_ratio < 0.2
+
+
 class MediaTextExtractor:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -88,7 +99,12 @@ class MediaTextExtractor:
             text=True,
             timeout=120,
         )
-        return result.stdout.strip()
+        text = result.stdout.strip()
+        if not text:
+            raise RuntimeError("macOS Vision returned empty OCR text")
+        if _looks_like_low_quality_ocr(text):
+            raise RuntimeError("macOS Vision returned low-quality OCR text")
+        return text
 
     def _is_supported_image(self, path: Path) -> bool:
         return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}

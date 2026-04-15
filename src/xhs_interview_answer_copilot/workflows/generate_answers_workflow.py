@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from importlib import import_module
 from typing import cast
 from typing import NotRequired, TypedDict
@@ -10,9 +11,14 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
+from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
-from xhs_interview_answer_copilot.workflows.schemas import GeneratedAnswerSet, NormalizedNote
+from xhs_interview_answer_copilot.workflows.schemas import (
+    GeneratedAnswerSet,
+    InterviewQuestion,
+    NormalizedNote,
+)
 
 
 class AnswerState(TypedDict):
@@ -25,6 +31,8 @@ class AnswerState(TypedDict):
 
 
 class GenerateAnswersWorkflow:
+    _BATCH_SIZE = 4
+
     def __init__(
         self,
         settings: Settings,
@@ -100,14 +108,6 @@ class GenerateAnswersWorkflow:
 
         normalized_note = state["normalized_note"]
         retrieved_context = state.get("retrieved_context", {})
-        retrieval_lines: list[str] = []
-        for question in normalized_note.questions:
-            retrieval_lines.append(f"question: {question.question}")
-            for item in retrieved_context.get(question.question, []):
-                retrieval_lines.append(
-                    f"- source_id={item.record_id}; score={item.score:.4f}; similar_question={item.question}; summary={item.summary}"
-                )
-
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -128,21 +128,31 @@ class GenerateAnswersWorkflow:
                 ),
             ]
         )
-        chain = prompt | llm | parser
-        answer_set = chain.invoke(
-            {
-                "format_instructions": parser.get_format_instructions(),
-                "note_id": normalized_note.note_id,
-                "note_url": normalized_note.note_url,
-                "title": normalized_note.title,
-                "summary": normalized_note.summary,
-                "questions": [question.model_dump(mode="json") for question in normalized_note.questions],
-                "retrieved_context": "\n".join(retrieval_lines),
-            }
+        chain = prompt | llm
+        all_answers = []
+        for batch in self._iter_question_batches(normalized_note.questions):
+            response = chain.invoke(
+                {
+                    "format_instructions": parser.get_format_instructions(),
+                    "note_id": normalized_note.note_id,
+                    "note_url": normalized_note.note_url,
+                    "title": normalized_note.title,
+                    "summary": normalized_note.summary,
+                    "questions": json.dumps(
+                        [question.model_dump(mode="json") for question in batch],
+                        ensure_ascii=False,
+                    ),
+                    "retrieved_context": self._format_retrieved_context(batch, retrieved_context),
+                }
+            )
+            partial_answer_set = parse_pydantic_response(parser, response)
+            all_answers.extend(self._validate_batch_answers(batch, partial_answer_set))
+        answer_set = GeneratedAnswerSet(
+            note_id=normalized_note.note_id,
+            note_url=normalized_note.note_url,
+            title=normalized_note.title,
+            answers=all_answers,
         )
-        answer_set.note_id = normalized_note.note_id
-        answer_set.note_url = normalized_note.note_url
-        answer_set.title = normalized_note.title
         valid_source_ids = {
             item.record_id
             for results in retrieved_context.values()
@@ -153,6 +163,57 @@ class GenerateAnswersWorkflow:
                 source_id for source_id in answer.source_ids if source_id in valid_source_ids
             ]
         return {"answer_set": answer_set}
+
+    def _iter_question_batches(
+        self, questions: list[InterviewQuestion]
+    ) -> list[list[InterviewQuestion]]:
+        return [
+            questions[index : index + self._BATCH_SIZE]
+            for index in range(0, len(questions), self._BATCH_SIZE)
+        ]
+
+    def _format_retrieved_context(
+        self,
+        questions: list[InterviewQuestion],
+        retrieved_context: dict[str, list[IndexedQuestion]],
+    ) -> str:
+        payload = []
+        for question in questions:
+            payload.append(
+                {
+                    "question": question.question,
+                    "matches": [
+                        {
+                            "source_id": item.record_id,
+                            "score": round(item.score, 4),
+                            "similar_question": item.question,
+                            "summary": item.summary,
+                        }
+                        for item in retrieved_context.get(question.question, [])
+                    ],
+                }
+            )
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _validate_batch_answers(
+        self,
+        questions: list[InterviewQuestion],
+        answer_set: GeneratedAnswerSet,
+    ) -> list:
+        if len(answer_set.answers) != len(questions):
+            raise RuntimeError("Answer batch size does not match question batch size")
+        answers_by_question = {}
+        for answer in answer_set.answers:
+            if answer.question in answers_by_question:
+                raise RuntimeError(f"Duplicate answer returned for question: {answer.question}")
+            answers_by_question[answer.question] = answer
+        ordered_answers = []
+        for question in questions:
+            matched_answer = answers_by_question.get(question.question)
+            if matched_answer is None:
+                raise RuntimeError(f"Missing answer for question: {question.question}")
+            ordered_answers.append(matched_answer)
+        return ordered_answers
 
     def _save_node(self, state: AnswerState) -> dict[str, str]:
         answer_set = cast(GeneratedAnswerSet, state.get("answer_set"))

@@ -23,6 +23,7 @@ func recognizeText(in path: String) throws -> String {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = true
+    request.recognitionLanguages = ["zh-Hans", "en-US"]
     let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
     try handler.perform([request])
     let observations = request.results ?? []
