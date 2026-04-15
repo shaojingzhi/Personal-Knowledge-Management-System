@@ -1,0 +1,31 @@
+{
+  "schema": "2.0",
+  "header": {
+    "event_id": "feishu-event-001",
+    "event_type": "im.message.receive_v1",
+    "create_time": "1776101111",
+    "token": "sample-token",
+    "app_id": "cli_sample_app"
+  },
+  "event": {
+    "sender": {
+      "sender_id": {
+        "union_id": "union_123",
+        "user_id": "ou_123",
+        "open_id": "ou_123"
+      },
+      "sender_type": "user",
+      "tenant_key": "tenant_123"
+    },
+    "message": {
+      "message_id": "om_123456",
+      "root_id": "om_123456",
+      "parent_id": "om_123456",
+      "create_time": "1776101111",
+      "chat_id": "oc_sample_chat",
+      "chat_type": "p2p",
+      "message_type": "text",
+      "content": "{\"text\":\"这是来自飞书的面经文本\\n1. Redis 持久化有哪些方式？\\n2. Python 装饰器原理是什么？\"}"
+    }
+  }
+}
