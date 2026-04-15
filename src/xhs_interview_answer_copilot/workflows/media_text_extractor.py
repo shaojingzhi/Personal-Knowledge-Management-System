@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import importlib.resources
 import mimetypes
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,17 @@ class MediaTextExtractor:
         return extracted_texts, warnings
 
     def _extract_single_image(self, path: Path) -> str:
+        try:
+            return self._extract_with_model(path)
+        except Exception as exc:
+            try:
+                return self._extract_with_macos_vision(path)
+            except Exception as fallback_exc:
+                raise RuntimeError(
+                    f"Model OCR failed: {exc}; macOS Vision fallback failed: {fallback_exc}"
+                )
+
+    def _extract_with_model(self, path: Path) -> str:
         messages_module = __import__("langchain_core.messages", fromlist=["HumanMessage"])
         HumanMessage = messages_module.HumanMessage
 
@@ -59,7 +72,23 @@ class MediaTextExtractor:
         )
         response = llm.invoke([message])
         content = getattr(response, "content", response)
-        return self._coerce_text(content)
+        text = self._coerce_text(content)
+        if text:
+            return text
+        raise RuntimeError("Vision model returned empty OCR text")
+
+    def _extract_with_macos_vision(self, path: Path) -> str:
+        tool_path = importlib.resources.files("xhs_interview_answer_copilot.tools").joinpath(
+            "macos_vision_ocr.swift"
+        )
+        result = subprocess.run(
+            ["swift", str(tool_path), str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return result.stdout.strip()
 
     def _is_supported_image(self, path: Path) -> bool:
         return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
