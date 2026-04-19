@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from importlib import import_module
-from typing import cast
+from typing import Any, cast
 from typing import NotRequired, TypedDict
 
 from xhs_interview_answer_copilot.config import Settings
@@ -15,6 +15,7 @@ from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pyda
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
 from xhs_interview_answer_copilot.workflows.schemas import (
+    GeneratedAnswerItem,
     GeneratedAnswerSet,
     InterviewQuestion,
     NormalizedNote,
@@ -131,22 +132,15 @@ class GenerateAnswersWorkflow:
         chain = prompt | llm
         all_answers = []
         for batch in self._iter_question_batches(normalized_note.questions):
-            response = chain.invoke(
-                {
-                    "format_instructions": parser.get_format_instructions(),
-                    "note_id": normalized_note.note_id,
-                    "note_url": normalized_note.note_url,
-                    "title": normalized_note.title,
-                    "summary": normalized_note.summary,
-                    "questions": json.dumps(
-                        [question.model_dump(mode="json") for question in batch],
-                        ensure_ascii=False,
-                    ),
-                    "retrieved_context": self._format_retrieved_context(batch, retrieved_context),
-                }
+            all_answers.extend(
+                self._generate_batch_answers(
+                    chain=chain,
+                    parser=parser,
+                    normalized_note=normalized_note,
+                    questions=batch,
+                    retrieved_context=retrieved_context,
+                )
             )
-            partial_answer_set = parse_pydantic_response(parser, response)
-            all_answers.extend(self._validate_batch_answers(batch, partial_answer_set))
         answer_set = GeneratedAnswerSet(
             note_id=normalized_note.note_id,
             note_url=normalized_note.note_url,
@@ -194,6 +188,117 @@ class GenerateAnswersWorkflow:
                 }
             )
         return json.dumps(payload, ensure_ascii=False)
+
+    def _generate_batch_answers(
+        self,
+        chain: Any,
+        parser: Any,
+        normalized_note: NormalizedNote,
+        questions: list[InterviewQuestion],
+        retrieved_context: dict[str, list[IndexedQuestion]],
+    ) -> list:
+        try:
+            response = chain.invoke(
+                {
+                    "format_instructions": parser.get_format_instructions(),
+                    "note_id": normalized_note.note_id,
+                    "note_url": normalized_note.note_url,
+                    "title": normalized_note.title,
+                    "summary": normalized_note.summary,
+                    "questions": json.dumps(
+                        [question.model_dump(mode="json") for question in questions],
+                        ensure_ascii=False,
+                    ),
+                    "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
+                }
+            )
+            partial_answer_set = parse_pydantic_response(parser, response)
+            return self._validate_batch_answers(questions, partial_answer_set)
+        except Exception as exc:
+            if not self._should_fallback_answer_generation(exc):
+                raise
+            if len(questions) == 1:
+                return [self._build_fallback_answer(questions[0])]
+            answers = []
+            for question in questions:
+                answers.extend(
+                    self._generate_batch_answers(
+                        chain=chain,
+                        parser=parser,
+                        normalized_note=normalized_note,
+                        questions=[question],
+                        retrieved_context=retrieved_context,
+                    )
+                )
+            return answers
+
+    def _should_fallback_answer_generation(self, exc: Exception) -> bool:
+        message = str(exc)
+        if "Invalid json output" in message:
+            return True
+        if "empty" in message.lower() and "output" in message.lower():
+            return True
+        return False
+
+    def _build_fallback_answer(self, question: InterviewQuestion) -> GeneratedAnswerItem:
+        short_answer = self._fallback_short_answer(question)
+        long_answer = self._fallback_long_answer(question)
+        code = self._fallback_code(question)
+        return GeneratedAnswerItem(
+            question=question.question,
+            short_answer=short_answer,
+            long_answer=long_answer,
+            code=code,
+            source_ids=[],
+        )
+
+    def _fallback_short_answer(self, question: InterviewQuestion) -> str:
+        if question.category == "behavior":
+            return "建议按背景、行动、结果三段式回答，突出你的真实经历、关键决策和最终产出。"
+        if question.category == "backend":
+            return "建议先讲核心原理，再补充实际排查或落地经验，最后说明在项目中的取舍。"
+        if question.category == "system-design":
+            return "建议从整体架构、关键模块、设计取舍和评估方式四个层面回答。"
+        return "建议先解释问题本质，再结合真实项目经验给出结构化回答。"
+
+    def _fallback_long_answer(self, question: InterviewQuestion) -> str:
+        if question.category == "behavior":
+            return (
+                "这个问题更适合用 STAR 或 Problem-Action-Result 的结构回答。"
+                "先说明当时的背景和目标，再讲你实际承担了什么角色、做了哪些关键动作。"
+                "随后补充结果和量化收益，比如效率提升、稳定性改善或项目推进效果。"
+                "最后可以总结你从这件事里沉淀出的经验，让答案更完整。"
+            )
+        if question.category == "backend":
+            return (
+                "回答这类问题时建议先讲底层原理，说明相关机制为什么会这样设计。"
+                "然后结合常见排查路径或工程实践，例如日志、监控、线程栈、内存快照、配置调优等。"
+                "如果你有真实案例，可以重点讲定位思路、根因分析和最终修复方案。"
+                "这样既能体现基础扎实，也能体现你在复杂问题里的实战能力。"
+            )
+        if question.category == "system-design":
+            return (
+                "回答时可以先给出整体架构或流程拆解，把核心模块和信息流讲清楚。"
+                "接着说明关键设计点，例如数据流、状态管理、容错、扩展性、评估指标或成本控制。"
+                "如果问题与 Agent、RAG 或大模型工程有关，可以补充你的编排方式、质量评估和线上监控闭环。"
+                "最后强调为什么这样设计，以及在真实业务里做过哪些取舍。"
+            )
+        return (
+            "这类问题建议先明确概念，再结合你的项目经验说明你是怎么理解和落地的。"
+            "如果涉及工具、流程或能力设计，可以补充使用场景、优缺点和优化方向。"
+            "面试时尽量避免只讲定义，最好加入自己做过的实践和复盘。"
+            "这样答案会更具体，也更容易体现你的工程判断力。"
+        )
+
+    def _fallback_code(self, question: InterviewQuestion) -> str:
+        lowered = question.question.lower()
+        if any(keyword in lowered for keyword in ["算法", "代码", "实现", "手撕"]):
+            return (
+                "def solve(*args, **kwargs):\n"
+                "    \"\"\"Replace with the concrete algorithm after clarifying the exact problem.\"\"\"\n"
+                "    pass\n"
+            )
+        return ""
 
     def _validate_batch_answers(
         self,

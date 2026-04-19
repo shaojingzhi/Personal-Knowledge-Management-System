@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+import re
 from typing import NotRequired, TypedDict, cast
 
 from xhs_interview_answer_copilot.config import Settings
@@ -12,6 +13,7 @@ from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pyda
 from xhs_interview_answer_copilot.workflows.media_text_extractor import MediaTextExtractor
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 from xhs_interview_answer_copilot.workflows.schemas import (
+    InterviewQuestion,
     NormalizedNote,
     SourceBundle,
     SourceLink,
@@ -113,11 +115,14 @@ class NormalizeNoteWorkflow:
                 "asset_paths": source_payload["asset_paths"],
             }
         )
-        normalized_note = parse_pydantic_response(parser, response)
-        normalized_note.note_id = source_payload["note_id"]
-        normalized_note.note_url = source_payload["note_url"]
+        try:
+            normalized_note = parse_pydantic_response(parser, response)
+        except Exception:
+            normalized_note = self._fallback_normalize_from_source(source_payload)
+        normalized_note.note_id = str(source_payload["note_id"])
+        normalized_note.note_url = str(source_payload["note_url"])
         if not normalized_note.title:
-            normalized_note.title = source_payload["title"]
+            normalized_note.title = str(source_payload["title"])
         existing_warnings = list(normalized_note.warnings)
         normalized_note.warnings = existing_warnings + cast(
             list[str], source_payload.get("warnings", [])
@@ -233,3 +238,120 @@ class NormalizeNoteWorkflow:
                 if entity.get("type") == "text_link" and isinstance(entity.get("url"), str):
                     return str(entity["url"])
         return self._extract_first_url(text)
+
+    def _fallback_normalize_from_source(self, source_payload: dict[str, object]) -> NormalizedNote:
+        asset_texts = cast(list[object], source_payload.get("asset_texts", []))
+        asset_text = "\n\n".join(text for text in asset_texts if isinstance(text, str))
+        combined_text = self._join_non_empty(
+            [source_payload.get("title"), source_payload.get("body_text"), asset_text]
+        )
+        questions = self._extract_questions_from_text(combined_text)
+        title = str(source_payload.get("title", "")).strip() or self._derive_title_from_text(combined_text)
+        summary = self._derive_summary_from_text(title=title, text=combined_text, question_count=len(questions))
+        warnings = [
+            "Normalization used local fallback extraction because the model response was empty or invalid."
+        ]
+        return NormalizedNote(
+            note_id=str(source_payload.get("note_id", "")),
+            note_url=str(source_payload.get("note_url", "")),
+            title=title,
+            summary=summary,
+            tags=self._derive_tags_from_text(title=title, text=combined_text),
+            warnings=warnings,
+            questions=questions,
+        )
+
+    def _extract_questions_from_text(self, text: str) -> list[InterviewQuestion]:
+        questions: list[InterviewQuestion] = []
+        seen: set[str] = set()
+        current_parts: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if self._is_noise_line(line):
+                continue
+            if self._starts_numbered_item(line):
+                if current_parts:
+                    question = self._build_question(" ".join(current_parts))
+                    if question is not None and question.question not in seen:
+                        questions.append(question)
+                        seen.add(question.question)
+                current_parts = [self._strip_number_prefix(line)]
+                continue
+            if current_parts:
+                current_parts.append(line)
+        if current_parts:
+            question = self._build_question(" ".join(current_parts))
+            if question is not None and question.question not in seen:
+                questions.append(question)
+        return questions
+
+    def _build_question(self, text: str) -> InterviewQuestion | None:
+        question = re.sub(r"\s+", " ", text).strip(" -•·。")
+        if len(question) < 4:
+            return None
+        if not question.endswith(("?", "？")):
+            question = f"{question}？"
+        return InterviewQuestion(
+            question=question,
+            category=self._infer_question_category(question),
+            keywords=self._extract_keywords(question),
+        )
+
+    def _derive_title_from_text(self, text: str) -> str:
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or self._is_noise_line(line):
+                continue
+            if self._starts_numbered_item(line):
+                continue
+            return line[:80]
+        return "Telegram OCR note"
+
+    def _derive_summary_from_text(self, title: str, text: str, question_count: int) -> str:
+        if title:
+            return f"{title}，通过本地回退流程提取出 {question_count} 个面试问题。"
+        return f"通过本地回退流程从源文本中提取出 {question_count} 个面试问题。"
+
+    def _derive_tags_from_text(self, title: str, text: str) -> list[str]:
+        candidates = [
+            ("Agent", ["agent", "智能体"]),
+            ("RAG", ["rag"]),
+            ("Java", ["java"]),
+            ("JVM", ["jvm", "垃圾回收", "gc"]),
+            ("AIGC", ["大模型", "ai coding", "llm"]),
+            ("面经", ["凉经", "面经", "一面", "二面"]),
+        ]
+        haystack = f"{title}\n{text}".lower()
+        tags = [label for label, needles in candidates if any(needle.lower() in haystack for needle in needles)]
+        return tags[:8]
+
+    def _infer_question_category(self, question: str) -> str:
+        lowered = question.lower()
+        if any(keyword in lowered for keyword in ["java", "jvm", "gc", "aop", "cglib", "cpu", "oom"]):
+            return "backend"
+        if any(keyword in lowered for keyword in ["agent", "rag", "意图识别", "知识库", "记忆", "大模型", "openai", "coding"]):
+            return "system-design"
+        if any(keyword in lowered for keyword in ["自我介绍", "成就感", "团队", "挑战", "反问", "怎么看"]):
+            return "behavior"
+        return "general"
+
+    def _extract_keywords(self, question: str) -> list[str]:
+        keywords: list[str] = []
+        for token in ["Agent", "RAG", "Java", "JVM", "AOP", "OOM", "CPU", "意图识别", "记忆系统", "AI Coding"]:
+            if token.lower() in question.lower():
+                keywords.append(token)
+        return keywords[:5]
+
+    def _is_noise_line(self, line: str) -> bool:
+        lowered = line.lower()
+        if any(token in lowered for token in ["长按扫描", "二维码", "小红书", "点赞", "收藏", "分享"]):
+            return True
+        return bool(re.fullmatch(r"[\W_0-9①②③④⑤⑥⑦⑧⑨⑩=®©:：.-]+", line))
+
+    def _starts_numbered_item(self, line: str) -> bool:
+        return bool(re.match(r"^(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[.、]\s*", line))
+
+    def _strip_number_prefix(self, line: str) -> str:
+        return re.sub(r"^(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩])[.、]\s*", "", line).strip()
