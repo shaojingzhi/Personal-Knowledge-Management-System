@@ -9,6 +9,7 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
 from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.media_text_extractor import MediaTextExtractor
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
@@ -102,7 +103,8 @@ class NormalizeNoteWorkflow:
             ]
         )
         chain = prompt | llm
-        response = chain.invoke(
+        response = invoke_with_retry(
+            chain,
             {
                 "format_instructions": parser.get_format_instructions(),
                 "source": source_payload["source"],
@@ -113,7 +115,7 @@ class NormalizeNoteWorkflow:
                 "asset_texts": source_payload["asset_texts"],
                 "image_urls": source_payload["image_urls"],
                 "asset_paths": source_payload["asset_paths"],
-            }
+            },
         )
         try:
             normalized_note = parse_pydantic_response(parser, response)

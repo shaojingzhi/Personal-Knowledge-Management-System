@@ -12,6 +12,7 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
 )
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
 from xhs_interview_answer_copilot.workflows.schemas import (
@@ -198,7 +199,8 @@ class GenerateAnswersWorkflow:
         retrieved_context: dict[str, list[IndexedQuestion]],
     ) -> list:
         try:
-            response = chain.invoke(
+            response = invoke_with_retry(
+                chain,
                 {
                     "format_instructions": parser.get_format_instructions(),
                     "note_id": normalized_note.note_id,
@@ -210,7 +212,7 @@ class GenerateAnswersWorkflow:
                         ensure_ascii=False,
                     ),
                     "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
-                }
+                },
             )
             partial_answer_set = parse_pydantic_response(parser, response)
             return self._validate_batch_answers(questions, partial_answer_set)
@@ -237,6 +239,12 @@ class GenerateAnswersWorkflow:
         if "Invalid json output" in message:
             return True
         if "empty" in message.lower() and "output" in message.lower():
+            return True
+        if "Missing answer for question" in message:
+            return True
+        if "Duplicate answer returned for question" in message:
+            return True
+        if "Answer batch size does not match question batch size" in message:
             return True
         return False
 
