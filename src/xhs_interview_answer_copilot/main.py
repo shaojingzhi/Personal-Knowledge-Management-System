@@ -51,6 +51,28 @@ def build_parser() -> argparse.ArgumentParser:
         "process-telegram-once",
         help="Ingest Telegram once and run the full LangGraph text pipeline automatically",
     )
+    daemon_parser = subparsers.add_parser(
+        "process-telegram-daemon",
+        help="Continuously poll Telegram and run the full pipeline in a loop",
+    )
+    daemon_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=15,
+        help="Sleep interval after a successful polling loop",
+    )
+    daemon_parser.add_argument(
+        "--failure-backoff-seconds",
+        type=int,
+        default=45,
+        help="Sleep interval after a failed polling loop",
+    )
+    daemon_parser.add_argument(
+        "--max-loops",
+        type=int,
+        default=None,
+        help="Optional loop cap for testing the daemon command",
+    )
     feishu_parser = subparsers.add_parser(
         "ingest-feishu-event",
         help="Ingest one Feishu event payload file into a SourceBundle",
@@ -278,6 +300,23 @@ def main() -> None:
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"processed_bundles={processed}")
+        return
+
+    if args.command == "process-telegram-daemon":
+        from xhs_interview_answer_copilot.workflows.process_telegram_daemon_workflow import (
+            ProcessTelegramDaemonWorkflow,
+        )
+
+        workflow = ProcessTelegramDaemonWorkflow(settings=settings)
+        result = workflow.run(
+            interval_seconds=args.interval_seconds,
+            failure_backoff_seconds=args.failure_backoff_seconds,
+            max_loops=args.max_loops,
+        )
+        print(f"success={result.success}")
+        print(f"reason={result.reason}")
+        print(f"loops={result.loops}")
+        print(f"processed_bundles={result.processed_bundles}")
         return
 
     if args.command == "ingest-feishu-event":

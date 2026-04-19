@@ -84,12 +84,13 @@ class NormalizeNoteWorkflow:
             [
                 (
                     "system",
-                    "You normalize noisy interview source bundles into structured interview questions. Remove obvious UI noise and keep only useful interview content.",
+                    "You normalize noisy interview source bundles into structured interview questions. Remove obvious UI noise and keep only useful interview content. Preserve the source language in the output. If the source content is mainly Chinese, the title, summary, tags, questions, categories, and keywords must stay in Chinese. Do not translate Chinese source material into English.",
                 ),
                 (
                     "human",
                     "Normalize this raw source bundle into structured interview questions.\n"
                     "Return JSON only.\n"
+                    "preferred_output_language: {preferred_output_language}\n"
                     "{format_instructions}\n"
                     "source: {source}\n"
                     "note_id: {note_id}\n"
@@ -107,6 +108,7 @@ class NormalizeNoteWorkflow:
             chain,
             {
                 "format_instructions": parser.get_format_instructions(),
+                "preferred_output_language": source_payload["preferred_output_language"],
                 "source": source_payload["source"],
                 "note_id": source_payload["note_id"],
                 "note_url": source_payload["note_url"],
@@ -117,10 +119,22 @@ class NormalizeNoteWorkflow:
                 "asset_paths": source_payload["asset_paths"],
             },
         )
+        preferred_output_language = str(source_payload["preferred_output_language"])
         try:
             normalized_note = parse_pydantic_response(parser, response)
+            if self._should_force_localized_fallback(
+                normalized_note=normalized_note,
+                preferred_output_language=preferred_output_language,
+            ):
+                normalized_note = self._fallback_normalize_from_source(
+                    source_payload,
+                    preferred_output_language=preferred_output_language,
+                )
         except Exception:
-            normalized_note = self._fallback_normalize_from_source(source_payload)
+            normalized_note = self._fallback_normalize_from_source(
+                source_payload,
+                preferred_output_language=preferred_output_language,
+            )
         normalized_note.note_id = str(source_payload["note_id"])
         normalized_note.note_url = str(source_payload["note_url"])
         if not normalized_note.title:
@@ -147,6 +161,9 @@ class NormalizeNoteWorkflow:
         source_bundle = self._parse_source_bundle(bundle_id=bundle_id, raw_note=raw_note)
         first_link = source_bundle.links[0].url if source_bundle.links else ""
         asset_texts, warnings = MediaTextExtractor(self._settings).extract_from_paths(source_bundle.asset_paths)
+        combined_text = self._join_non_empty(
+            [source_bundle.title, "\n\n".join(source_bundle.text_blocks), "\n\n".join(asset_texts)]
+        )
         return {
             "source": source_bundle.source,
             "note_id": source_bundle.bundle_id,
@@ -157,7 +174,51 @@ class NormalizeNoteWorkflow:
             "warnings": warnings,
             "image_urls": source_bundle.image_urls,
             "asset_paths": source_bundle.asset_paths,
+            "preferred_output_language": self._detect_preferred_output_language(
+                source_bundle=source_bundle,
+                combined_text=combined_text,
+            ),
         }
+
+    def _detect_preferred_output_language(
+        self,
+        *,
+        source_bundle: SourceBundle,
+        combined_text: str,
+    ) -> str:
+        metadata = cast(dict[str, object], source_bundle.metadata)
+        raw_message = cast(dict[str, object], metadata.get("raw_message", {}))
+        sender = cast(dict[str, object], raw_message.get("from", {}))
+        language_code = str(sender.get("language_code", ""))
+        if language_code.lower().startswith("zh"):
+            return "zh-CN"
+        chinese_characters = len(re.findall(r"[\u4e00-\u9fff]", combined_text))
+        latin_words = len(re.findall(r"[A-Za-z]{2,}", combined_text))
+        if chinese_characters >= max(8, latin_words):
+            return "zh-CN"
+        return "same-as-source"
+
+    def _should_force_localized_fallback(
+        self,
+        *,
+        normalized_note: NormalizedNote,
+        preferred_output_language: str,
+    ) -> bool:
+        if preferred_output_language != "zh-CN":
+            return False
+        sample_text = "\n".join(
+            [
+                normalized_note.title,
+                normalized_note.summary,
+                *normalized_note.tags,
+                *(question.question for question in normalized_note.questions),
+                *(question.category for question in normalized_note.questions),
+                *(keyword for question in normalized_note.questions for keyword in question.keywords),
+            ]
+        )
+        chinese_characters = len(re.findall(r"[\u4e00-\u9fff]", sample_text))
+        latin_words = len(re.findall(r"[A-Za-z]{2,}", sample_text))
+        return chinese_characters < max(6, latin_words)
 
     def _parse_source_bundle(
         self,
@@ -241,15 +302,28 @@ class NormalizeNoteWorkflow:
                     return str(entity["url"])
         return self._extract_first_url(text)
 
-    def _fallback_normalize_from_source(self, source_payload: dict[str, object]) -> NormalizedNote:
+    def _fallback_normalize_from_source(
+        self,
+        source_payload: dict[str, object],
+        *,
+        preferred_output_language: str,
+    ) -> NormalizedNote:
         asset_texts = cast(list[object], source_payload.get("asset_texts", []))
         asset_text = "\n\n".join(text for text in asset_texts if isinstance(text, str))
         combined_text = self._join_non_empty(
             [source_payload.get("title"), source_payload.get("body_text"), asset_text]
         )
-        questions = self._extract_questions_from_text(combined_text)
+        questions = self._extract_questions_from_text(
+            combined_text,
+            preferred_output_language=preferred_output_language,
+        )
         title = str(source_payload.get("title", "")).strip() or self._derive_title_from_text(combined_text)
-        summary = self._derive_summary_from_text(title=title, text=combined_text, question_count=len(questions))
+        summary = self._derive_summary_from_text(
+            title=title,
+            text=combined_text,
+            question_count=len(questions),
+            preferred_output_language=preferred_output_language,
+        )
         warnings = [
             "Normalization used local fallback extraction because the model response was empty or invalid."
         ]
@@ -258,12 +332,21 @@ class NormalizeNoteWorkflow:
             note_url=str(source_payload.get("note_url", "")),
             title=title,
             summary=summary,
-            tags=self._derive_tags_from_text(title=title, text=combined_text),
+            tags=self._derive_tags_from_text(
+                title=title,
+                text=combined_text,
+                preferred_output_language=preferred_output_language,
+            ),
             warnings=warnings,
             questions=questions,
         )
 
-    def _extract_questions_from_text(self, text: str) -> list[InterviewQuestion]:
+    def _extract_questions_from_text(
+        self,
+        text: str,
+        *,
+        preferred_output_language: str,
+    ) -> list[InterviewQuestion]:
         questions: list[InterviewQuestion] = []
         seen: set[str] = set()
         current_parts: list[str] = []
@@ -275,7 +358,10 @@ class NormalizeNoteWorkflow:
                 continue
             if self._starts_numbered_item(line):
                 if current_parts:
-                    question = self._build_question(" ".join(current_parts))
+                    question = self._build_question(
+                        " ".join(current_parts),
+                        preferred_output_language=preferred_output_language,
+                    )
                     if question is not None and question.question not in seen:
                         questions.append(question)
                         seen.add(question.question)
@@ -284,12 +370,20 @@ class NormalizeNoteWorkflow:
             if current_parts:
                 current_parts.append(line)
         if current_parts:
-            question = self._build_question(" ".join(current_parts))
+            question = self._build_question(
+                " ".join(current_parts),
+                preferred_output_language=preferred_output_language,
+            )
             if question is not None and question.question not in seen:
                 questions.append(question)
         return questions
 
-    def _build_question(self, text: str) -> InterviewQuestion | None:
+    def _build_question(
+        self,
+        text: str,
+        *,
+        preferred_output_language: str,
+    ) -> InterviewQuestion | None:
         question = re.sub(r"\s+", " ", text).strip(" -•·。")
         if len(question) < 4:
             return None
@@ -297,8 +391,14 @@ class NormalizeNoteWorkflow:
             question = f"{question}？"
         return InterviewQuestion(
             question=question,
-            category=self._infer_question_category(question),
-            keywords=self._extract_keywords(question),
+            category=self._infer_question_category(
+                question,
+                preferred_output_language=preferred_output_language,
+            ),
+            keywords=self._extract_keywords(
+                question,
+                preferred_output_language=preferred_output_language,
+            ),
         )
 
     def _derive_title_from_text(self, text: str) -> str:
@@ -311,26 +411,61 @@ class NormalizeNoteWorkflow:
             return line[:80]
         return "Telegram OCR note"
 
-    def _derive_summary_from_text(self, title: str, text: str, question_count: int) -> str:
+    def _derive_summary_from_text(
+        self,
+        title: str,
+        text: str,
+        question_count: int,
+        *,
+        preferred_output_language: str,
+    ) -> str:
+        if preferred_output_language == "zh-CN":
+            if title:
+                return f"{title}，通过本地回退流程提取出 {question_count} 个面试问题。"
+            return f"通过本地回退流程从源文本中提取出 {question_count} 个面试问题。"
         if title:
-            return f"{title}，通过本地回退流程提取出 {question_count} 个面试问题。"
-        return f"通过本地回退流程从源文本中提取出 {question_count} 个面试问题。"
+            return f"{title}. Extracted {question_count} interview questions via local fallback normalization."
+        return f"Extracted {question_count} interview questions via local fallback normalization."
 
-    def _derive_tags_from_text(self, title: str, text: str) -> list[str]:
-        candidates = [
-            ("Agent", ["agent", "智能体"]),
-            ("RAG", ["rag"]),
-            ("Java", ["java"]),
-            ("JVM", ["jvm", "垃圾回收", "gc"]),
-            ("AIGC", ["大模型", "ai coding", "llm"]),
-            ("面经", ["凉经", "面经", "一面", "二面"]),
-        ]
+    def _derive_tags_from_text(
+        self,
+        title: str,
+        text: str,
+        *,
+        preferred_output_language: str,
+    ) -> list[str]:
+        if preferred_output_language == "zh-CN":
+            candidates = [
+                ("智能体", ["agent", "智能体"]),
+                ("检索增强", ["rag"]),
+                ("Java", ["java"]),
+                ("JVM", ["jvm", "垃圾回收", "gc"]),
+                ("大模型", ["大模型", "ai coding", "llm"]),
+                ("面经", ["凉经", "面经", "一面", "二面"]),
+            ]
+        else:
+            candidates = [
+                ("Agent", ["agent", "智能体"]),
+                ("RAG", ["rag"]),
+                ("Java", ["java"]),
+                ("JVM", ["jvm", "垃圾回收", "gc"]),
+                ("AIGC", ["大模型", "ai coding", "llm"]),
+                ("Interview", ["凉经", "面经", "一面", "二面"]),
+            ]
         haystack = f"{title}\n{text}".lower()
         tags = [label for label, needles in candidates if any(needle.lower() in haystack for needle in needles)]
         return tags[:8]
 
-    def _infer_question_category(self, question: str) -> str:
+    def _infer_question_category(self, question: str, *, preferred_output_language: str) -> str:
         lowered = question.lower()
+        if preferred_output_language == "zh-CN":
+            if any(keyword in lowered for keyword in ["java", "jvm", "gc", "aop", "cglib", "cpu", "oom"]):
+                return "后端"
+            if any(keyword in lowered for keyword in ["agent", "rag", "意图识别", "知识库", "记忆", "大模型", "openai", "coding"]):
+                return "系统设计"
+            if any(keyword in lowered for keyword in ["自我介绍", "成就感", "团队", "挑战", "反问", "怎么看"]):
+                return "行为"
+            return "通用"
         if any(keyword in lowered for keyword in ["java", "jvm", "gc", "aop", "cglib", "cpu", "oom"]):
             return "backend"
         if any(keyword in lowered for keyword in ["agent", "rag", "意图识别", "知识库", "记忆", "大模型", "openai", "coding"]):
@@ -339,11 +474,37 @@ class NormalizeNoteWorkflow:
             return "behavior"
         return "general"
 
-    def _extract_keywords(self, question: str) -> list[str]:
+    def _extract_keywords(self, question: str, *, preferred_output_language: str) -> list[str]:
         keywords: list[str] = []
-        for token in ["Agent", "RAG", "Java", "JVM", "AOP", "OOM", "CPU", "意图识别", "记忆系统", "AI Coding"]:
-            if token.lower() in question.lower():
-                keywords.append(token)
+        if preferred_output_language == "zh-CN":
+            token_map = [
+                ("智能体", "agent"),
+                ("检索增强", "rag"),
+                ("Java", "java"),
+                ("JVM", "jvm"),
+                ("AOP", "aop"),
+                ("OOM", "oom"),
+                ("CPU", "cpu"),
+                ("意图识别", "意图识别"),
+                ("记忆系统", "记忆"),
+                ("AI 编码", "ai coding"),
+            ]
+        else:
+            token_map = [
+                ("Agent", "agent"),
+                ("RAG", "rag"),
+                ("Java", "java"),
+                ("JVM", "jvm"),
+                ("AOP", "aop"),
+                ("OOM", "oom"),
+                ("CPU", "cpu"),
+                ("Intent Recognition", "意图识别"),
+                ("Memory System", "记忆"),
+                ("AI Coding", "ai coding"),
+            ]
+        for label, needle in token_map:
+            if needle in question.lower() or label.lower() in question.lower():
+                keywords.append(label)
         return keywords[:5]
 
     def _is_noise_line(self, line: str) -> bool:
