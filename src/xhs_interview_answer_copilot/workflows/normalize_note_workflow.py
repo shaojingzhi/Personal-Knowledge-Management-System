@@ -104,37 +104,43 @@ class NormalizeNoteWorkflow:
             ]
         )
         chain = prompt | llm
-        response = invoke_with_retry(
-            chain,
-            {
-                "format_instructions": parser.get_format_instructions(),
-                "preferred_output_language": source_payload["preferred_output_language"],
-                "source": source_payload["source"],
-                "note_id": source_payload["note_id"],
-                "note_url": source_payload["note_url"],
-                "title": source_payload["title"],
-                "body_text": source_payload["body_text"],
-                "asset_texts": source_payload["asset_texts"],
-                "image_urls": source_payload["image_urls"],
-                "asset_paths": source_payload["asset_paths"],
-            },
-        )
         preferred_output_language = str(source_payload["preferred_output_language"])
+        fallback_candidate = self._fallback_normalize_from_source(
+            source_payload,
+            preferred_output_language=preferred_output_language,
+        )
         try:
-            normalized_note = parse_pydantic_response(parser, response)
-            if self._should_force_localized_fallback(
-                normalized_note=normalized_note,
-                preferred_output_language=preferred_output_language,
-            ):
-                normalized_note = self._fallback_normalize_from_source(
-                    source_payload,
-                    preferred_output_language=preferred_output_language,
-                )
-        except Exception:
-            normalized_note = self._fallback_normalize_from_source(
-                source_payload,
-                preferred_output_language=preferred_output_language,
+            response = invoke_with_retry(
+                chain,
+                {
+                    "format_instructions": parser.get_format_instructions(),
+                    "preferred_output_language": source_payload["preferred_output_language"],
+                    "source": source_payload["source"],
+                    "note_id": source_payload["note_id"],
+                    "note_url": source_payload["note_url"],
+                    "title": source_payload["title"],
+                    "body_text": source_payload["body_text"],
+                    "asset_texts": source_payload["asset_texts"],
+                    "image_urls": source_payload["image_urls"],
+                    "asset_paths": source_payload["asset_paths"],
+                },
             )
+            try:
+                normalized_note = parse_pydantic_response(parser, response)
+                if self._should_force_localized_fallback(
+                    normalized_note=normalized_note,
+                    preferred_output_language=preferred_output_language,
+                ):
+                    normalized_note = fallback_candidate
+                elif not normalized_note.questions and fallback_candidate.questions:
+                    normalized_note = fallback_candidate
+            except Exception:
+                normalized_note = fallback_candidate
+        except Exception:
+            normalized_note = fallback_candidate
+            normalized_note.warnings = list(normalized_note.warnings) + [
+                "Normalization model request failed; used local fallback extraction."
+            ]
         normalized_note.note_id = str(source_payload["note_id"])
         normalized_note.note_url = str(source_payload["note_url"])
         if not normalized_note.title:
