@@ -1,6 +1,106 @@
 import argparse
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 from xhs_interview_answer_copilot.config import settings
+
+
+DEFAULT_TELEGRAM_WORKER_SESSION = "xhs-copilot-telegram"
+
+
+def _tmux_available() -> bool:
+    return shutil.which("tmux") is not None
+
+
+def _tmux_session_exists(session_name: str) -> bool:
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", session_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _telegram_daemon_log_path() -> Path:
+    log_dir = Path(settings.sqlite_path).parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "telegram-daemon.log"
+
+
+def _telegram_daemon_log_path_readonly() -> Path:
+    return Path(settings.sqlite_path).parent / "telegram-daemon.log"
+
+
+def _tmux_attach_command(session_name: str) -> str:
+    return f"tmux attach -t {shlex.quote(session_name)}"
+
+
+def _start_telegram_worker_in_tmux(
+    *,
+    session_name: str,
+    interval_seconds: int,
+    failure_backoff_seconds: int,
+) -> tuple[bool, str, Path]:
+    log_path = _telegram_daemon_log_path()
+    if not _tmux_available():
+        return False, "tmux is not installed or not found in PATH.", log_path
+    if _tmux_session_exists(session_name):
+        return True, "Telegram worker is already running.", log_path
+
+    command_parts = [
+        f"PYTHONPATH={shlex.quote('src' + os.pathsep + os.getenv('PYTHONPATH'))}" if os.getenv("PYTHONPATH") else "PYTHONPATH=src",
+        shlex.quote(sys.executable),
+        "-u",
+        "-m",
+        "xhs_interview_answer_copilot.main",
+        "process-telegram-daemon",
+        "--interval-seconds",
+        str(interval_seconds),
+        "--failure-backoff-seconds",
+        str(failure_backoff_seconds),
+        ">>",
+        shlex.quote(str(log_path)),
+        "2>&1",
+    ]
+    result = subprocess.run(
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            "-c",
+            str(Path.cwd()),
+            " ".join(command_parts),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Failed to start tmux session.", log_path
+    return True, "Telegram worker started.", log_path
+
+
+def _stop_telegram_worker_in_tmux(session_name: str) -> tuple[bool, str]:
+    if not _tmux_available():
+        return False, "tmux is not installed or not found in PATH."
+    if not _tmux_session_exists(session_name):
+        return True, "Telegram worker is not running."
+    result = subprocess.run(
+        ["tmux", "kill-session", "-t", session_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Failed to stop tmux session."
+    return True, "Telegram worker stopped."
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +182,45 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional loop cap for testing the daemon command",
+    )
+    worker_start_parser = subparsers.add_parser(
+        "telegram-worker-start",
+        help="Start the Telegram daemon in a detached tmux session",
+    )
+    worker_start_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
+    )
+    worker_start_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=15,
+        help="Sleep interval after a successful polling loop",
+    )
+    worker_start_parser.add_argument(
+        "--failure-backoff-seconds",
+        type=int,
+        default=45,
+        help="Sleep interval after a failed polling loop",
+    )
+    worker_status_parser = subparsers.add_parser(
+        "telegram-worker-status",
+        help="Show whether the tmux-backed Telegram worker is running",
+    )
+    worker_status_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
+    )
+    worker_stop_parser = subparsers.add_parser(
+        "telegram-worker-stop",
+        help="Stop the tmux-backed Telegram worker",
+    )
+    worker_stop_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
     )
     feishu_parser = subparsers.add_parser(
         "ingest-feishu-event",
@@ -368,6 +507,35 @@ def main() -> None:
         print(f"reason={result.reason}")
         print(f"loops={result.loops}")
         print(f"processed_bundles={result.processed_bundles}")
+        return
+
+    if args.command == "telegram-worker-start":
+        success, reason, log_path = _start_telegram_worker_in_tmux(
+            session_name=args.session_name,
+            interval_seconds=args.interval_seconds,
+            failure_backoff_seconds=args.failure_backoff_seconds,
+        )
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"session_name={args.session_name}")
+        print(f"log_path={log_path}")
+        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        return
+
+    if args.command == "telegram-worker-status":
+        log_path = _telegram_daemon_log_path_readonly()
+        running = _tmux_available() and _tmux_session_exists(args.session_name)
+        print(f"running={running}")
+        print(f"session_name={args.session_name}")
+        print(f"log_path={log_path}")
+        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        return
+
+    if args.command == "telegram-worker-stop":
+        success, reason = _stop_telegram_worker_in_tmux(args.session_name)
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"session_name={args.session_name}")
         return
 
     if args.command == "ingest-feishu-event":

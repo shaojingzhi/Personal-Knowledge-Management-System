@@ -72,6 +72,9 @@ After installing the package in editable mode, run:
 - `xhs-copilot reply-telegram <note_id>`
 - `xhs-copilot process-telegram-once`
 - `xhs-copilot process-telegram-daemon --interval-seconds 15`
+- `xhs-copilot telegram-worker-start`
+- `xhs-copilot telegram-worker-status`
+- `xhs-copilot telegram-worker-stop`
 - `xhs-copilot ingest-feishu-event <json_path>`
 - `xhs-copilot ingest-telegram-once`
 - or `python -m xhs_interview_answer_copilot.main status`
@@ -106,6 +109,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 Telegram orchestration now sends a quick local answer first so image notes can be acknowledged quickly. A non-blocking `backfill-full-answers` process is started after the Telegram reply to regenerate full LLM answers and refresh stored answer records without sending a second Telegram message.
 
 `xhs-copilot process-telegram-daemon` runs the same Telegram pipeline in a loop so the project can behave like a resident local worker. Use `--interval-seconds` to control the normal polling cadence, `--failure-backoff-seconds` to slow down after failures such as provider rate limits, and `--max-loops` for local testing.
+
+For a practical background worker, run `xhs-copilot telegram-worker-start`. It starts `process-telegram-daemon` inside a detached tmux session named `xhs-copilot-telegram`, appends logs to `telegram-daemon.log` next to `SQLITE_PATH` (default `data/telegram-daemon.log`), and avoids launching a duplicate worker if the session already exists. Use `xhs-copilot telegram-worker-status` to check whether it is running, `tmux attach -t xhs-copilot-telegram` to inspect it interactively, and `xhs-copilot telegram-worker-stop` to stop it.
 
 `xhs-copilot ingest-feishu-event <json_path>` ingests a Feishu event payload file, maps supported text-message events into the shared `SourceBundle` schema, and stores the resulting raw bundle locally.
 
