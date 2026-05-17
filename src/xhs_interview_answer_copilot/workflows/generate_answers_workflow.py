@@ -47,12 +47,28 @@ class GenerateAnswersWorkflow:
         self._vector_store = vector_store
         self._answer_store = answer_store
 
-    def run(self, note_id: str) -> tuple[bool, str, str | None, str | None]:
+    def run(self, note_id: str, *, quick: bool = False) -> tuple[bool, str, str | None, str | None]:
         normalized_note = self._normalized_store.load_normalized_note(note_id)
         if normalized_note is None:
             return False, f"Normalized note not found for note_id: {note_id}", None, None
         if not normalized_note.questions:
             return False, "No normalized questions found for answer generation.", None, None
+        if quick:
+            answer_set = self._build_quick_answer_set(normalized_note)
+            answer_path = self._answer_store.save_answers(
+                note_id=note_id,
+                payload=answer_set.model_dump(mode="json"),
+            )
+            markdown_path = self._answer_store.save_markdown(
+                note_id=note_id,
+                markdown=self._build_markdown(answer_set),
+            )
+            return (
+                True,
+                "Quick answer generation completed.",
+                str(answer_path),
+                str(markdown_path),
+            )
         if self._settings.openai_api_key is None and self._settings.openai_base_url is None:
             return False, "Configure OPENAI_API_KEY or OPENAI_BASE_URL first.", None, None
 
@@ -166,6 +182,53 @@ class GenerateAnswersWorkflow:
             questions[index : index + self._BATCH_SIZE]
             for index in range(0, len(questions), self._BATCH_SIZE)
         ]
+
+    def _build_quick_answer_set(self, normalized_note: NormalizedNote) -> GeneratedAnswerSet:
+        return GeneratedAnswerSet(
+            note_id=normalized_note.note_id,
+            note_url=normalized_note.note_url,
+            title=f"{normalized_note.title}（快速版）" if normalized_note.title else normalized_note.note_id,
+            answers=[self._build_quick_answer(question) for question in normalized_note.questions],
+        )
+
+    def _build_quick_answer(self, question: InterviewQuestion) -> GeneratedAnswerItem:
+        answer_direction = self._quick_answer_direction(question)
+        return GeneratedAnswerItem(
+            question=question.question,
+            short_answer=answer_direction,
+            long_answer=(
+                "这是快速版答案，用于先回发和确认题目已解析。"
+                "详细版答案会在后台继续补全，完成后覆盖本地 answer.md / answers.json。"
+            ),
+            code=self._quick_code_hint(question),
+            source_ids=[],
+        )
+
+    def _quick_answer_direction(self, question: InterviewQuestion) -> str:
+        category = question.category.lower()
+        if self._is_coding_question(question):
+            return "先明确输入输出和边界条件，再讲解析/建模思路，最后补充时间复杂度和异常处理。"
+        if "system" in category or "设计" in question.category or "agent" in question.question.lower():
+            return "按整体架构、关键模块、状态流转、失败恢复和工程取舍来回答。"
+        if "algorithm" in category or "算法" in question.category:
+            return "先讲核心原理，再结合公式、复杂度、适用场景和工程优化回答。"
+        if "backend" in category or "后端" in question.category:
+            return "先讲机制原理，再讲排查路径、线上经验和落地取舍。"
+        return "先给结论，再结合项目经历展开背景、做法、结果和复盘。"
+
+    def _quick_code_hint(self, question: InterviewQuestion) -> str:
+        if not self._is_coding_question(question):
+            return ""
+        return (
+            "def solve(data, path):\n"
+            "    # 快速版：详细实现会在后台补全答案中生成\n"
+            "    raise NotImplementedError\n"
+        )
+
+    def _is_coding_question(self, question: InterviewQuestion) -> bool:
+        lowered = question.question.lower()
+        coding_markers = ["手撕", "编程题", "路径查询器", "写代码", "实现一个", "实现一个简易"]
+        return any(marker in lowered for marker in coding_markers)
 
     def _format_retrieved_context(
         self,

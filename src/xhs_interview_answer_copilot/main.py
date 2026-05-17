@@ -37,11 +37,21 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-answers", help="Generate RAG-based answers for one normalized note"
     )
     answer_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    answer_parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Generate a local quick answer set for fast Telegram replies",
+    )
     store_answers_parser = subparsers.add_parser(
         "store-answer-records",
         help="Store generated question-answer records into vector storage",
     )
     store_answers_parser.add_argument("note_id", help="The processed bundle id")
+    backfill_parser = subparsers.add_parser(
+        "backfill-full-answers",
+        help="Regenerate full answers and refresh stored answer records without replying",
+    )
+    backfill_parser.add_argument("note_id", help="The processed bundle id")
     reply_parser = subparsers.add_parser(
         "reply-telegram",
         help="Send generated answer text back to Telegram",
@@ -242,7 +252,7 @@ def main() -> None:
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
             answer_store=AnswerArtifactStore(output_dir=settings.output_dir),
         )
-        success, reason, answer_path, markdown_path = workflow.run(args.note_id)
+        success, reason, answer_path, markdown_path = workflow.run(args.note_id, quick=args.quick)
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"answer_path={answer_path}")
@@ -266,6 +276,47 @@ def main() -> None:
         success, reason, stored_count = workflow.run(args.note_id)
         print(f"success={success}")
         print(f"reason={reason}")
+        print(f"stored_count={stored_count}")
+        return
+
+    if args.command == "backfill-full-answers":
+        from xhs_interview_answer_copilot.storage.answer_artifact_store import (
+            AnswerArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
+            NormalizedArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+        from xhs_interview_answer_copilot.workflows.generate_answers_workflow import (
+            GenerateAnswersWorkflow,
+        )
+        from xhs_interview_answer_copilot.workflows.store_answer_records_workflow import (
+            StoreAnswerRecordsWorkflow,
+        )
+
+        answer_store = AnswerArtifactStore(output_dir=settings.output_dir)
+        vector_store = QuestionVectorStore(sqlite_path=settings.sqlite_path)
+        answer_workflow = GenerateAnswersWorkflow(
+            settings=settings,
+            normalized_store=NormalizedArtifactStore(output_dir=settings.output_dir),
+            vector_store=vector_store,
+            answer_store=answer_store,
+        )
+        success, reason, answer_path, markdown_path = answer_workflow.run(args.note_id)
+        print(f"answer_success={success}")
+        print(f"answer_reason={reason}")
+        print(f"answer_path={answer_path}")
+        print(f"markdown_path={markdown_path}")
+        if not success:
+            return
+        store_workflow = StoreAnswerRecordsWorkflow(
+            settings=settings,
+            answer_store=answer_store,
+            vector_store=vector_store,
+        )
+        store_success, store_reason, stored_count = store_workflow.run(args.note_id)
+        print(f"store_success={store_success}")
+        print(f"store_reason={store_reason}")
         print(f"stored_count={stored_count}")
         return
 

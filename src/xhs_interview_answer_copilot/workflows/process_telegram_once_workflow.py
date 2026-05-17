@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 from importlib import import_module
+from pathlib import Path
+import subprocess
+import sys
 from typing import NotRequired, TypedDict
 
 from xhs_interview_answer_copilot.collectors.telegram_ingestor import TelegramIngestor
@@ -31,6 +35,7 @@ class BundleProcessState(TypedDict):
     stored_count: NotRequired[int]
     reply_message_id: NotRequired[int]
     reply_partial: NotRequired[bool]
+    backfill_started: NotRequired[bool]
 
 
 class ProcessTelegramOnceWorkflow:
@@ -219,12 +224,14 @@ class ProcessTelegramOnceWorkflow:
         graph.add_node("generate", self._generate_node)
         graph.add_node("store_answers", self._store_answers_node)
         graph.add_node("reply", self._reply_node)
+        graph.add_node("backfill_full_answers", self._backfill_full_answers_node)
         graph.add_edge(START, "normalize")
         graph.add_edge("normalize", "index")
         graph.add_edge("index", "generate")
         graph.add_edge("generate", "store_answers")
         graph.add_edge("store_answers", "reply")
-        graph.add_edge("reply", END)
+        graph.add_edge("reply", "backfill_full_answers")
+        graph.add_edge("backfill_full_answers", END)
         app = graph.compile()
 
         try:
@@ -264,13 +271,38 @@ class ProcessTelegramOnceWorkflow:
             vector_store=self._vector_store,
             answer_store=self._answer_store,
         )
-        success, reason, answer_path, markdown_path = workflow.run(state["bundle_id"])
+        success, reason, answer_path, markdown_path = workflow.run(state["bundle_id"], quick=True)
         if not success:
             raise RuntimeError(reason)
         return {
             "answer_path": answer_path or "",
             "markdown_path": markdown_path or "",
         }
+
+    def _backfill_full_answers_node(self, state: BundleProcessState) -> dict[str, object]:
+        log_dir = Path(self._settings.sqlite_path).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "full-answer-backfill.log"
+        log_file = log_path.open("a", encoding="utf-8")
+        command = [
+            sys.executable,
+            "-m",
+            "xhs_interview_answer_copilot.main",
+            "backfill-full-answers",
+            state["bundle_id"],
+        ]
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = "src" if not existing_pythonpath else f"src{os.pathsep}{existing_pythonpath}"
+        subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=log_file,
+            env=env,
+            start_new_session=True,
+        )
+        log_file.close()
+        return {"backfill_started": True}
 
     def _store_answers_node(self, state: BundleProcessState) -> dict[str, object]:
         workflow = StoreAnswerRecordsWorkflow(
