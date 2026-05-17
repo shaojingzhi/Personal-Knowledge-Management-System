@@ -149,7 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
     store_answers_parser.add_argument("note_id", help="The processed bundle id")
     backfill_parser = subparsers.add_parser(
         "backfill-full-answers",
-        help="Regenerate full answers and refresh stored answer records without replying",
+        help="Regenerate full answers, refresh records, and try to send answer.md to Telegram",
     )
     backfill_parser.add_argument("note_id", help="The processed bundle id")
     reply_parser = subparsers.add_parser(
@@ -419,9 +419,13 @@ def main() -> None:
         return
 
     if args.command == "backfill-full-answers":
+        from xhs_interview_answer_copilot.dispatch.telegram_dispatcher import (
+            TelegramDispatcher,
+        )
         from xhs_interview_answer_copilot.storage.answer_artifact_store import (
             AnswerArtifactStore,
         )
+        from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
         from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
             NormalizedArtifactStore,
         )
@@ -447,7 +451,7 @@ def main() -> None:
         print(f"answer_path={answer_path}")
         print(f"markdown_path={markdown_path}")
         if not success:
-            return
+            raise SystemExit(1)
         store_workflow = StoreAnswerRecordsWorkflow(
             settings=settings,
             answer_store=answer_store,
@@ -457,6 +461,28 @@ def main() -> None:
         print(f"store_success={store_success}")
         print(f"store_reason={store_reason}")
         print(f"stored_count={stored_count}")
+        dispatcher = TelegramDispatcher(
+            settings=settings,
+            answer_store=answer_store,
+            raw_store=RawArtifactStore(output_dir=settings.output_dir),
+        )
+        document_caption = "完整答案已生成，Markdown 文件见附件。"
+        if not store_success:
+            document_caption = "完整答案已生成，Markdown 文件见附件。注意：本地答案记录入库刷新失败。"
+        document_result = dispatcher.send_answer_markdown_document(
+            args.note_id,
+            document_caption,
+        )
+        print(f"document_success={document_result.success}")
+        print(f"document_reason={document_result.reason}")
+        print(f"document_message_id={document_result.message_id}")
+        if not document_result.success:
+            status_result = dispatcher.send_status_message(
+                args.note_id,
+                f"完整答案已生成，但 Markdown 文件发送失败：{document_result.reason}",
+            )
+            print(f"document_failure_notice_success={status_result.success}")
+            print(f"document_failure_notice_reason={status_result.reason}")
         return
 
     if args.command == "reply-telegram":

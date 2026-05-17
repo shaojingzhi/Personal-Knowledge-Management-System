@@ -5,6 +5,7 @@ from importlib import import_module
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from typing import NotRequired, TypedDict
 
 from xhs_interview_answer_copilot.collectors.telegram_ingestor import TelegramIngestor
@@ -17,13 +18,17 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
 from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
-from xhs_interview_answer_copilot.workflows.generate_answers_workflow import GenerateAnswersWorkflow
-from xhs_interview_answer_copilot.workflows.index_note_workflow import IndexNoteWorkflow
-from xhs_interview_answer_copilot.workflows.normalize_note_workflow import NormalizeNoteWorkflow
-from xhs_interview_answer_copilot.workflows.store_answer_records_workflow import (
-    StoreAnswerRecordsWorkflow,
-)
 from xhs_interview_answer_copilot.workflows.schemas import SourceBundle
+
+STAGE_TIMEOUT_SECONDS = {
+    "normalize": 1200,
+    "index": 90,
+    "generate": 300,
+    "store_answers": 90,
+    "reply": 90,
+    "backfill_full_answers": 30,
+}
+BACKFILL_TIMEOUT_SECONDS = 3600
 
 
 class BundleProcessState(TypedDict):
@@ -63,8 +68,10 @@ class ProcessTelegramOnceWorkflow:
         grouped_bundle_ids = self._group_bundle_ids(ingest_result.bundle_ids)
         processed: list[str] = []
         for bundle_id in grouped_bundle_ids:
+            self._send_status(bundle_id, "✅ 已收到内容，开始 OCR/解析面试题。图片较大时可能需要几分钟。")
             success, reason = self._process_bundle(bundle_id)
             if not success:
+                self._send_status(bundle_id, f"❌ 处理失败：{reason}")
                 if not processed:
                     self._restore_offset(previous_update_id, bundle_id)
                 return False, f"{bundle_id}: {reason}", processed
@@ -242,53 +249,105 @@ class ProcessTelegramOnceWorkflow:
             return False, "Partial Telegram reply sent."
         return True, "Processed bundle successfully."
 
-    def _normalize_node(self, state: BundleProcessState) -> dict[str, object]:
-        workflow = NormalizeNoteWorkflow(
-            settings=self._settings,
-            raw_store=self._raw_store,
-            normalized_store=self._normalized_store,
+    def _run_cli_stage(
+        self,
+        stage_name: str,
+        args: list[str],
+        *,
+        require_success: bool = True,
+    ) -> dict[str, str]:
+        env = os.environ.copy()
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = "src" if not existing_pythonpath else f"src{os.pathsep}{existing_pythonpath}"
+        command = [sys.executable, "-m", "xhs_interview_answer_copilot.main", *args]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=STAGE_TIMEOUT_SECONDS[stage_name],
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Stage {stage_name} timed out after {STAGE_TIMEOUT_SECONDS[stage_name]} seconds."
+            ) from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise RuntimeError(f"Stage {stage_name} failed: {detail}")
+        parsed = self._parse_cli_output(result.stdout)
+        success_value = parsed.get("success")
+        if require_success and success_value == "False":
+            raise RuntimeError(parsed.get("reason") or f"Stage {stage_name} reported failure.")
+        return parsed
+
+    def _parse_cli_output(self, output: str) -> dict[str, str]:
+        parsed: dict[str, str] = {}
+        for line in output.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            parsed[key.strip()] = value.strip()
+        return parsed
+
+    def _send_status(self, bundle_id: str, text: str) -> None:
+        thread = threading.Thread(
+            target=self._send_status_sync,
+            args=(bundle_id, text),
+            daemon=True,
         )
-        success, reason, normalized_path = workflow.run(state["bundle_id"])
-        if not success:
-            raise RuntimeError(reason)
-        return {"normalized_path": normalized_path or ""}
+        thread.start()
+
+    def _send_status_sync(self, bundle_id: str, text: str) -> None:
+        dispatcher = TelegramDispatcher(
+            settings=self._settings,
+            answer_store=self._answer_store,
+            raw_store=self._raw_store,
+        )
+        result = dispatcher.send_status_message(bundle_id, text)
+        if not result.success:
+            print(f"[status] bundle={bundle_id} failed={result.reason}")
+
+    def _normalize_node(self, state: BundleProcessState) -> dict[str, object]:
+        self._send_status(state["bundle_id"], "🔎 正在 OCR/标准化题目...")
+        result = self._run_cli_stage("normalize", ["normalize-note", state["bundle_id"]])
+        normalized_note = self._normalized_store.load_normalized_note(state["bundle_id"])
+        question_count = len(normalized_note.questions) if normalized_note is not None else 0
+        self._send_status(state["bundle_id"], f"✅ 已提取 {question_count} 道题，开始建立检索索引。")
+        return {"normalized_path": result.get("normalized_path", "")}
 
     def _index_node(self, state: BundleProcessState) -> dict[str, object]:
-        workflow = IndexNoteWorkflow(
-            settings=self._settings,
-            normalized_store=self._normalized_store,
-            vector_store=self._vector_store,
-        )
-        success, reason, indexed_count = workflow.run(state["bundle_id"])
-        if not success:
-            raise RuntimeError(reason)
-        return {"indexed_count": indexed_count}
+        self._send_status(state["bundle_id"], "🗂️ 正在写入检索索引...")
+        result = self._run_cli_stage("index", ["index-note", state["bundle_id"]])
+        self._send_status(state["bundle_id"], "✅ 索引完成，正在生成快速答案。")
+        return {"indexed_count": int(result.get("indexed_count", "0"))}
 
     def _generate_node(self, state: BundleProcessState) -> dict[str, object]:
-        workflow = GenerateAnswersWorkflow(
-            settings=self._settings,
-            normalized_store=self._normalized_store,
-            vector_store=self._vector_store,
-            answer_store=self._answer_store,
-        )
-        success, reason, answer_path, markdown_path = workflow.run(state["bundle_id"], quick=True)
-        if not success:
-            raise RuntimeError(reason)
+        self._send_status(state["bundle_id"], "⚡ 正在生成快速答案，稍后先发到 Telegram。")
+        result = self._run_cli_stage("generate", ["generate-answers", state["bundle_id"], "--quick"])
+        self._send_status(state["bundle_id"], "✅ 快速答案已生成，正在入库并准备发送。")
         return {
-            "answer_path": answer_path or "",
-            "markdown_path": markdown_path or "",
+            "answer_path": result.get("answer_path", ""),
+            "markdown_path": result.get("markdown_path", ""),
         }
 
     def _backfill_full_answers_node(self, state: BundleProcessState) -> dict[str, object]:
+        self._send_status(state["bundle_id"], "🧠 快速答案已发送。完整答案后台生成中，完成后会发送 Markdown 文件。")
         log_dir = Path(self._settings.sqlite_path).parent
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "full-answer-backfill.log"
         log_file = log_path.open("a", encoding="utf-8")
         command = [
             sys.executable,
-            "-m",
-            "xhs_interview_answer_copilot.main",
-            "backfill-full-answers",
+            "-c",
+            (
+                "import subprocess, sys; "
+                "cmd = [sys.executable, '-m', 'xhs_interview_answer_copilot.main', "
+                "'backfill-full-answers', sys.argv[1]]; "
+                f"result = subprocess.run(cmd, timeout={BACKFILL_TIMEOUT_SECONDS}); "
+                "sys.exit(result.returncode)"
+            ),
             state["bundle_id"],
         ]
         env = os.environ.copy()
@@ -305,28 +364,22 @@ class ProcessTelegramOnceWorkflow:
         return {"backfill_started": True}
 
     def _store_answers_node(self, state: BundleProcessState) -> dict[str, object]:
-        workflow = StoreAnswerRecordsWorkflow(
-            settings=self._settings,
-            answer_store=self._answer_store,
-            vector_store=self._vector_store,
-        )
-        success, reason, stored_count = workflow.run(state["bundle_id"])
-        if not success:
-            raise RuntimeError(reason)
-        return {"stored_count": stored_count}
+        self._send_status(state["bundle_id"], "💾 正在保存答案记录...")
+        result = self._run_cli_stage("store_answers", ["store-answer-records", state["bundle_id"]])
+        self._send_status(state["bundle_id"], "✅ 答案记录已保存，正在发送快速答案。")
+        return {"stored_count": int(result.get("stored_count", "0"))}
 
     def _reply_node(self, state: BundleProcessState) -> dict[str, object]:
-        dispatcher = TelegramDispatcher(
-            settings=self._settings,
-            answer_store=self._answer_store,
-            raw_store=self._raw_store,
+        result = self._run_cli_stage(
+            "reply",
+            ["reply-telegram", state["bundle_id"]],
+            require_success=False,
         )
-        result = dispatcher.reply_answers(state["bundle_id"])
-        if not result.success:
-            if result.sent_count > 0:
+        if result.get("success") == "False":
+            if int(result.get("sent_count", "0")) > 0:
                 return {
-                    "reply_message_id": result.message_id or 0,
+                    "reply_message_id": int(result.get("message_id", "0") or "0"),
                     "reply_partial": True,
                 }
-            raise RuntimeError(result.reason)
-        return {"reply_message_id": result.message_id or 0}
+            raise RuntimeError(result.get("reason") or "Telegram reply failed.")
+        return {"reply_message_id": int(result.get("message_id", "0") or "0")}

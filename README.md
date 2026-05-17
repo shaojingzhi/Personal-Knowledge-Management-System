@@ -106,7 +106,7 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 
 `xhs-copilot process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
 
-Telegram orchestration now sends a quick local answer first so image notes can be acknowledged quickly. A non-blocking `backfill-full-answers` process is started after the Telegram reply to regenerate full LLM answers and refresh stored answer records without sending a second Telegram message.
+Telegram orchestration now sends progress messages while it OCRs, normalizes, indexes, generates, stores, and replies, so large image notes do not look stuck. It sends a quick local answer first so image notes can be acknowledged quickly. A non-blocking `backfill-full-answers` process is started after the Telegram reply to regenerate full LLM answers, refresh stored answer records when possible, and send the completed `answer.md` file back to Telegram as a document.
 
 `xhs-copilot process-telegram-daemon` runs the same Telegram pipeline in a loop so the project can behave like a resident local worker. Use `--interval-seconds` to control the normal polling cadence, `--failure-backoff-seconds` to slow down after failures such as provider rate limits, and `--max-loops` for local testing.
 
