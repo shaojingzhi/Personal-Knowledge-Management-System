@@ -31,6 +31,9 @@ dev = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.package-data]
+xhs_interview_answer_copilot = ["tools/*.swift"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -42,6 +42,7 @@ Bootstrap-stage environment variables:
 - `OPENAI_PROXY_URL`
 - `OPENAI_TIMEOUT_SECONDS`
 - `NORMALIZE_MODEL`
+- `VISION_MODEL`
 - `EMBEDDING_MODEL`
 - `ANSWER_MODEL`
 - `RETRIEVAL_TOP_K`
@@ -68,6 +69,7 @@ After installing the package in editable mode, run:
 - `xhs-copilot store-answer-records <note_id>`
 - `xhs-copilot reply-telegram <note_id>`
 - `xhs-copilot process-telegram-once`
+- `xhs-copilot ingest-feishu-event <json_path>`
 - `xhs-copilot ingest-telegram-once`
 - or `python -m xhs_interview_answer_copilot.main status`
 
@@ -98,6 +100,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 
 `xhs-copilot process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
 
+`xhs-copilot ingest-feishu-event <json_path>` ingests a Feishu event payload file, maps supported text-message events into the shared `SourceBundle` schema, and stores the resulting raw bundle locally.
+
 `xhs-copilot ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
 
 Raw ingestion now trends toward a shared `SourceBundle` shape with explicit `canonical_url`, `text_blocks`, `asset_paths`, and `image_urls`, so Telegram is the first message-driven source and later integrations such as Feishu can target the same normalization entry point.
@@ -107,3 +111,5 @@ If `api.telegram.org` is blocked in your network, set `TELEGRAM_PROXY_URL` to an
 If model requests need the same proxy, set `OPENAI_PROXY_URL` such as `http://127.0.0.1:7890`. You can also adjust `OPENAI_TIMEOUT_SECONDS` for slower model responses.
 
 For quick local testing when your endpoint does not provide embeddings, set `EMBEDDING_MODEL=local-hash-v1` to use a deterministic local hash embedding fallback.
+
+If your endpoint supports multimodal input, set `VISION_MODEL` to a compatible model name so screenshot assets can be converted into text during normalization.

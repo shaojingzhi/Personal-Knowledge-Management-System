@@ -39,7 +39,7 @@ class TelegramIngestor:
                 }
             )
 
-    def ingest_once(self) -> TelegramIngestResult:
+    def ingest_once(self, commit_offset: bool = True) -> TelegramIngestResult:
         if self._settings.telegram_bot_token is None:
             return TelegramIngestResult(0, 0, [], "TELEGRAM_BOT_TOKEN is not configured.")
 
@@ -81,7 +81,7 @@ class TelegramIngestor:
             saved_bundles += 1
             bundle_ids.append(bundle_id)
 
-        if max_update_id is not None:
+        if commit_offset and max_update_id is not None:
             self._state_store.set_last_update_id(max_update_id)
         return TelegramIngestResult(
             processed_updates,

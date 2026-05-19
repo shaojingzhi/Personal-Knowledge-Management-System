@@ -20,6 +20,10 @@ class NormalizedNote(BaseModel):
     title: str = Field(description="Normalized note title if available.")
     summary: str = Field(description="One short summary of the interview post.")
     tags: list[str] = Field(default_factory=list, description="Compact tags for the post.")
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Best-effort extraction or normalization warnings.",
+    )
     questions: list[InterviewQuestion] = Field(
         default_factory=list,
         description="Structured interview questions extracted from the post.",

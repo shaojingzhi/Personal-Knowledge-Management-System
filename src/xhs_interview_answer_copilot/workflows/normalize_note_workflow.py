@@ -8,6 +8,8 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
 from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
+from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
+from xhs_interview_answer_copilot.workflows.media_text_extractor import MediaTextExtractor
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
 from xhs_interview_answer_copilot.workflows.schemas import (
     NormalizedNote,
@@ -91,13 +93,14 @@ class NormalizeNoteWorkflow:
                     "note_url: {note_url}\n"
                     "title: {title}\n"
                     "body_text: {body_text}\n"
+                    "asset_texts: {asset_texts}\n"
                     "image_urls: {image_urls}\n"
                     "asset_paths: {asset_paths}",
                 ),
             ]
         )
-        chain = prompt | llm | parser
-        normalized_note = chain.invoke(
+        chain = prompt | llm
+        response = chain.invoke(
             {
                 "format_instructions": parser.get_format_instructions(),
                 "source": source_payload["source"],
@@ -105,14 +108,20 @@ class NormalizeNoteWorkflow:
                 "note_url": source_payload["note_url"],
                 "title": source_payload["title"],
                 "body_text": source_payload["body_text"],
+                "asset_texts": source_payload["asset_texts"],
                 "image_urls": source_payload["image_urls"],
                 "asset_paths": source_payload["asset_paths"],
             }
         )
+        normalized_note = parse_pydantic_response(parser, response)
         normalized_note.note_id = source_payload["note_id"]
         normalized_note.note_url = source_payload["note_url"]
         if not normalized_note.title:
             normalized_note.title = source_payload["title"]
+        existing_warnings = list(normalized_note.warnings)
+        normalized_note.warnings = existing_warnings + cast(
+            list[str], source_payload.get("warnings", [])
+        )
         return {"normalized_note": normalized_note}
 
     def _save_node(self, state: NormalizeState) -> dict[str, str]:
@@ -130,12 +139,15 @@ class NormalizeNoteWorkflow:
     ) -> dict[str, object]:
         source_bundle = self._parse_source_bundle(bundle_id=bundle_id, raw_note=raw_note)
         first_link = source_bundle.links[0].url if source_bundle.links else ""
+        asset_texts, warnings = MediaTextExtractor(self._settings).extract_from_paths(source_bundle.asset_paths)
         return {
             "source": source_bundle.source,
             "note_id": source_bundle.bundle_id,
             "note_url": source_bundle.canonical_url or first_link,
             "title": source_bundle.title,
             "body_text": "\n\n".join(source_bundle.text_blocks),
+            "asset_texts": asset_texts,
+            "warnings": warnings,
             "image_urls": source_bundle.image_urls,
             "asset_paths": source_bundle.asset_paths,
         }

@@ -162,5 +162,8 @@ class TelegramDispatcher:
         metadata = raw_payload.get("metadata")
         if not isinstance(metadata, dict):
             return None
+        reply_target_message_id = metadata.get("reply_target_message_id")
+        if isinstance(reply_target_message_id, int):
+            return reply_target_message_id
         message_id = metadata.get("message_id")
         return message_id if isinstance(message_id, int) else None

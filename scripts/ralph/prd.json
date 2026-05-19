@@ -1,177 +1,52 @@
 {
   "project": "XHS Interview Answer Copilot",
-  "branchName": "ralph/xhs-telegram-text-e2e-core-loop",
-  "description": "Build a Telegram-first text processing loop that ingests a message, normalizes interview questions, generates answers, writes Markdown locally, stores question-answer records for retrieval, and sends the generated answer text back to Telegram.",
+  "branchName": "ralph/xhs-ocr-grouping-feishu-next",
+  "description": "Implement the next-stage optional features for the Telegram-first interview copilot: OCR or multimodal extraction for image-first bundles, safer Telegram message grouping for split inputs, and a Feishu adapter that reuses the SourceBundle-based pipeline.",
   "userStories": [
-    {
-      "id": "US-001",
-      "title": "Bootstrap project and config loading",
-      "description": "As the developer, I want a typed Python project skeleton with config loading so that the automation service has a maintainable foundation.",
-      "acceptanceCriteria": [
-        "Project includes Python package structure for ingestion, workflows, storage, and dispatch modules",
-        "Configuration loads from environment variables with documented required keys",
-        "A CLI entry point or main module starts without continuous polling enabled",
-        "Typecheck passes"
-      ],
-      "priority": 1,
-      "passes": false,
-      "notes": "Core scope. Existing base should be reused and tightened where needed."
-    },
-    {
-      "id": "US-002",
-      "title": "Ingest Telegram text messages",
-      "description": "As the user, I want to send a text message to a Telegram Bot so that interview content can enter the pipeline from my phone with minimal friction.",
-      "acceptanceCriteria": [
-        "Telegram intake accepts plain text messages from the configured user or chat",
-        "Ingestion extracts message metadata needed to track source, time, and sender context",
-        "Unsupported or empty text messages fail clearly instead of crashing the bot flow",
-        "Typecheck passes"
-      ],
-      "priority": 2,
-      "passes": false,
-      "notes": "Core scope. Focus this iteration on the text-first path only."
-    },
-    {
-      "id": "US-003",
-      "title": "Persist raw Telegram bundles",
-      "description": "As the system, I want to store raw Telegram text bundles locally so that later normalization and debugging have replayable inputs.",
-      "acceptanceCriteria": [
-        "Each ingested Telegram text message is stored as a deterministic raw artifact bundle",
-        "Raw bundles include enough metadata to trace back to the original Telegram message",
-        "Stored raw bundles can be reloaded by downstream workflows",
-        "Typecheck passes"
-      ],
-      "priority": 3,
-      "passes": false,
-      "notes": "Core scope. Reuse the SourceBundle abstraction."
-    },
-    {
-      "id": "US-004",
-      "title": "Normalize text bundles into questions",
-      "description": "As the user, I want Telegram text bundles transformed into structured interview questions so that answer generation is focused and reusable.",
-      "acceptanceCriteria": [
-        "LangGraph workflow accepts a text-first SourceBundle input and outputs a typed normalized JSON document",
-        "Normalization filters obvious non-interview noise from the source content",
-        "Normalization stops clearly when the input text is too sparse to produce meaningful questions",
-        "Typecheck passes"
-      ],
-      "priority": 4,
-      "passes": false,
-      "notes": "Core scope. Text-first quality matters more than broad source coverage."
-    },
-    {
-      "id": "US-005",
-      "title": "Generate retrieval-aware answers",
-      "description": "As the user, I want both detailed and concise answers for normalized interview questions, using similar prior records when available, so that I can study deeply or review quickly.",
-      "acceptanceCriteria": [
-        "Generation step can retrieve similar prior records before generating answers when history exists",
-        "Generation step consumes normalized question data and retrieved context to produce a detailed answer set",
-        "Generation step produces a concise review version suitable for mobile reading",
-        "Generated outputs are typed and persisted independently from raw source content",
-        "Typecheck passes"
-      ],
-      "priority": 5,
-      "passes": false,
-      "notes": "Core scope. Retrieval should be part of the path, but the first bundle may have little or no historical context yet."
-    },
-    {
-      "id": "US-006",
-      "title": "Persist local JSON and Markdown artifacts",
-      "description": "As the user, I want processed outputs saved locally as JSON and Markdown so that I can inspect and review them outside Telegram.",
-      "acceptanceCriteria": [
-        "Service writes deterministic per-bundle JSON artifacts for raw, normalized, and generated outputs",
-        "Service writes a Markdown answer artifact suitable for quick reading and archival review",
-        "Artifact generation does not depend on Telegram delivery succeeding",
-        "Typecheck passes"
-      ],
-      "priority": 6,
-      "passes": false,
-      "notes": "Core scope. Markdown is the primary human-readable archive."
-    },
-    {
-      "id": "US-007",
-      "title": "Store question-answer records in vector storage",
-      "description": "As the user, I want both questions and generated answers stored for retrieval and later organization so that study materials accumulate over time.",
-      "acceptanceCriteria": [
-        "Vector storage keeps normalized question records early enough for later bundles to retrieve them before generation",
-        "Vector storage keeps full question-answer records after generation rather than only question embeddings",
-        "Stored records include enough metadata to trace back to bundle id and local artifact paths",
-        "Insertion skips malformed or empty records without crashing the workflow",
-        "Typecheck passes"
-      ],
-      "priority": 7,
-      "passes": false,
-      "notes": "Core scope. Retrieval should support later archival and organization, not just immediate grounding."
-    },
-    {
-      "id": "US-008",
-      "title": "Reply to Telegram with generated answer text",
-      "description": "As the user, I want the generated answer text sent back to Telegram so that I can review results on mobile immediately.",
-      "acceptanceCriteria": [
-        "Telegram dispatcher sends a readable text reply based on the generated answer artifacts",
-        "Reply formatting stays within Telegram text constraints or degrades clearly when too long",
-        "Dispatcher records success or failure status for the outbound message",
-        "Typecheck passes"
-      ],
-      "priority": 8,
-      "passes": false,
-      "notes": "Core scope. Telegram reply should reuse the generated answer artifacts instead of regenerating content inline."
-    },
-    {
-      "id": "US-009",
-      "title": "Add one-shot automatic orchestration",
-      "description": "As the user, I want a newly ingested Telegram text message to automatically continue through normalization, answer generation, local archival, vector insertion, and Telegram reply so that the flow works end to end without manual command chaining.",
-      "acceptanceCriteria": [
-        "A single command or bot action can process a new Telegram text bundle from ingestion to final outputs",
-        "The orchestration stops clearly at the failing stage if one step fails",
-        "Successful steps are not silently skipped and final outputs are verifiable on disk",
-        "Typecheck passes"
-      ],
-      "priority": 9,
-      "passes": false,
-      "notes": "Core scope. This is the core usability gap between working components and a true end-to-end flow."
-    },
     {
       "id": "US-010",
       "title": "Add OCR or multimodal media extraction",
       "description": "As the user, I want screenshot-heavy bundles to be readable so that image-first interview posts can also enter the same pipeline.",
       "acceptanceCriteria": [
         "Downloaded Telegram assets can be converted into text with OCR or multimodal models",
-        "Media-derived text can be merged into the same SourceBundle-driven normalization path",
+        "Media-derived text is merged into the same SourceBundle-driven normalization path before question extraction",
+        "OCR or multimodal extraction can process at least one local image file without requiring a reachable Xiaohongshu web page",
         "Media extraction failures are surfaced clearly without corrupting the original raw bundle",
         "Typecheck passes"
       ],
       "priority": 10,
       "passes": false,
-      "notes": "Optional scope. Important for real usage, but not required for the first text-first end-to-end path."
+      "notes": "Implement the smallest stable path first: local image file -> extracted text -> normalize. Prefer compatibility with the existing OpenAI-compatible stack and LangChain message format."
     },
     {
       "id": "US-011",
-      "title": "Add Telegram message grouping",
-      "description": "As the user, I want related Telegram messages sent close together to be grouped into one logical bundle so that links and follow-up text are processed together.",
+      "title": "Add safer Telegram message grouping",
+      "description": "As the user, I want related Telegram messages sent close together to be grouped into one logical bundle so that links and follow-up text are processed together without merging unrelated messages.",
       "acceptanceCriteria": [
-        "Related Telegram messages from the same chat can be merged into one processing bundle under clear rules",
-        "Message grouping improves multi-part text inputs without corrupting unrelated messages",
-        "Grouped bundles remain replayable and traceable to the original message ids",
+        "Grouping only merges messages from the same chat under explicit, conservative rules",
+        "The grouping strategy supports the common case of link preview followed by explanatory text without over-grouping unrelated messages",
+        "Grouped bundles remain replayable and traceable to original message ids and retain a safe reply target",
+        "Grouping failures do not break the one-shot orchestration path",
         "Typecheck passes"
       ],
       "priority": 11,
       "passes": false,
-      "notes": "Optional scope. This is a usability improvement after the first text-only core loop works."
+      "notes": "Stability matters more than recall. It is acceptable to under-group if that avoids accidental cross-message merges."
     },
     {
       "id": "US-012",
       "title": "Add Feishu source adapter",
       "description": "As the user, I want Feishu messages to enter the same pipeline so that another collaboration tool can reuse the SourceBundle-based workflow.",
       "acceptanceCriteria": [
-        "Feishu inbound events can be mapped into the shared SourceBundle schema",
-        "Feishu-derived bundles can reuse existing normalization, indexing, generation, archival, and reply flows without source-specific redesign",
-        "Adapter-specific metadata is preserved for debugging",
+        "Feishu inbound event payloads can be mapped into the shared SourceBundle schema",
+        "The adapter supports at least text message events and preserves provider-specific metadata for debugging",
+        "Feishu-derived bundles can reuse existing normalization, generation, archival, and reply-adjacent workflows without source-specific redesign",
+        "The adapter handles unsupported event shapes clearly instead of crashing",
         "Typecheck passes"
       ],
       "priority": 12,
       "passes": false,
-      "notes": "Optional scope. Validates that SourceBundle truly supports multi-source expansion."
+      "notes": "A minimal adapter may begin with one-shot event ingestion from a webhook payload or file-backed event sample, as long as it proves the SourceBundle reuse path."
     }
   ]
 }

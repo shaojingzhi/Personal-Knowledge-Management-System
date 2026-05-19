@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         "process-telegram-once",
         help="Ingest Telegram once and run the full LangGraph text pipeline automatically",
     )
+    feishu_parser = subparsers.add_parser(
+        "ingest-feishu-event",
+        help="Ingest one Feishu event payload file into a SourceBundle",
+    )
+    feishu_parser.add_argument("json_path", help="Path to a Feishu event JSON file")
     subparsers.add_parser(
         "ingest-telegram-once",
         help="Fetch Telegram updates once and persist raw message bundles",
@@ -273,6 +278,18 @@ def main() -> None:
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"processed_bundles={processed}")
+        return
+
+    if args.command == "ingest-feishu-event":
+        from xhs_interview_answer_copilot.collectors.feishu_ingestor import FeishuIngestor
+        from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
+
+        ingestor = FeishuIngestor(raw_store=RawArtifactStore(output_dir=settings.output_dir))
+        result = ingestor.ingest_event_file(args.json_path)
+        print(f"success={result.success}")
+        print(f"reason={result.reason}")
+        print(f"bundle_id={result.bundle_id}")
+        print(f"challenge={result.challenge}")
         return
 
     if args.command == "ingest-telegram-once":
