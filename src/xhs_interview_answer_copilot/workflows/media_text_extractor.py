@@ -22,6 +22,21 @@ def _looks_like_low_quality_ocr(text: str) -> bool:
     return len(compact) >= 12 and useful_ratio < 0.2
 
 
+def _looks_like_invalid_model_ocr(text: str) -> bool:
+    lowered = text.lower()
+    suspicious_markers = [
+        "last login:",
+        "user@macbook",
+        "% ls -la",
+        "documents",
+        "downloads",
+        "desktop",
+        ".ds_store",
+    ]
+    marker_hits = sum(marker in lowered for marker in suspicious_markers)
+    return marker_hits >= 2
+
+
 class MediaTextExtractor:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -47,6 +62,8 @@ class MediaTextExtractor:
         return extracted_texts, warnings
 
     def _extract_single_image(self, path: Path) -> str:
+        if self._settings.vision_model == self._settings.normalize_model:
+            return self._extract_with_macos_vision(path)
         try:
             return self._extract_with_model(path)
         except Exception as exc:
@@ -84,8 +101,10 @@ class MediaTextExtractor:
         response = llm.invoke([message])
         content = getattr(response, "content", response)
         text = self._coerce_text(content)
-        if text:
+        if text and not _looks_like_invalid_model_ocr(text):
             return text
+        if text:
+            raise RuntimeError("Vision model returned invalid OCR text")
         raise RuntimeError("Vision model returned empty OCR text")
 
     def _extract_with_macos_vision(self, path: Path) -> str:

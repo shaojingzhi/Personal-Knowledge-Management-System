@@ -1,6 +1,106 @@
 import argparse
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 from xhs_interview_answer_copilot.config import settings
+
+
+DEFAULT_TELEGRAM_WORKER_SESSION = "xhs-copilot-telegram"
+
+
+def _tmux_available() -> bool:
+    return shutil.which("tmux") is not None
+
+
+def _tmux_session_exists(session_name: str) -> bool:
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", session_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _telegram_daemon_log_path() -> Path:
+    log_dir = Path(settings.sqlite_path).parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "telegram-daemon.log"
+
+
+def _telegram_daemon_log_path_readonly() -> Path:
+    return Path(settings.sqlite_path).parent / "telegram-daemon.log"
+
+
+def _tmux_attach_command(session_name: str) -> str:
+    return f"tmux attach -t {shlex.quote(session_name)}"
+
+
+def _start_telegram_worker_in_tmux(
+    *,
+    session_name: str,
+    interval_seconds: int,
+    failure_backoff_seconds: int,
+) -> tuple[bool, str, Path]:
+    log_path = _telegram_daemon_log_path()
+    if not _tmux_available():
+        return False, "tmux is not installed or not found in PATH.", log_path
+    if _tmux_session_exists(session_name):
+        return True, "Telegram worker is already running.", log_path
+
+    command_parts = [
+        f"PYTHONPATH={shlex.quote('src' + os.pathsep + os.getenv('PYTHONPATH'))}" if os.getenv("PYTHONPATH") else "PYTHONPATH=src",
+        shlex.quote(sys.executable),
+        "-u",
+        "-m",
+        "xhs_interview_answer_copilot.main",
+        "process-telegram-daemon",
+        "--interval-seconds",
+        str(interval_seconds),
+        "--failure-backoff-seconds",
+        str(failure_backoff_seconds),
+        ">>",
+        shlex.quote(str(log_path)),
+        "2>&1",
+    ]
+    result = subprocess.run(
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            "-c",
+            str(Path.cwd()),
+            " ".join(command_parts),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Failed to start tmux session.", log_path
+    return True, "Telegram worker started.", log_path
+
+
+def _stop_telegram_worker_in_tmux(session_name: str) -> tuple[bool, str]:
+    if not _tmux_available():
+        return False, "tmux is not installed or not found in PATH."
+    if not _tmux_session_exists(session_name):
+        return True, "Telegram worker is not running."
+    result = subprocess.run(
+        ["tmux", "kill-session", "-t", session_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "Failed to stop tmux session."
+    return True, "Telegram worker stopped."
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,11 +137,21 @@ def build_parser() -> argparse.ArgumentParser:
         "generate-answers", help="Generate RAG-based answers for one normalized note"
     )
     answer_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    answer_parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Generate a local quick answer set for fast Telegram replies",
+    )
     store_answers_parser = subparsers.add_parser(
         "store-answer-records",
         help="Store generated question-answer records into vector storage",
     )
     store_answers_parser.add_argument("note_id", help="The processed bundle id")
+    backfill_parser = subparsers.add_parser(
+        "backfill-full-answers",
+        help="Regenerate full answers, refresh records, and try to send answer.md to Telegram",
+    )
+    backfill_parser.add_argument("note_id", help="The processed bundle id")
     reply_parser = subparsers.add_parser(
         "reply-telegram",
         help="Send generated answer text back to Telegram",
@@ -50,6 +160,67 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "process-telegram-once",
         help="Ingest Telegram once and run the full LangGraph text pipeline automatically",
+    )
+    daemon_parser = subparsers.add_parser(
+        "process-telegram-daemon",
+        help="Continuously poll Telegram and run the full pipeline in a loop",
+    )
+    daemon_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=15,
+        help="Sleep interval after a successful polling loop",
+    )
+    daemon_parser.add_argument(
+        "--failure-backoff-seconds",
+        type=int,
+        default=45,
+        help="Sleep interval after a failed polling loop",
+    )
+    daemon_parser.add_argument(
+        "--max-loops",
+        type=int,
+        default=None,
+        help="Optional loop cap for testing the daemon command",
+    )
+    worker_start_parser = subparsers.add_parser(
+        "telegram-worker-start",
+        help="Start the Telegram daemon in a detached tmux session",
+    )
+    worker_start_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
+    )
+    worker_start_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=15,
+        help="Sleep interval after a successful polling loop",
+    )
+    worker_start_parser.add_argument(
+        "--failure-backoff-seconds",
+        type=int,
+        default=45,
+        help="Sleep interval after a failed polling loop",
+    )
+    worker_status_parser = subparsers.add_parser(
+        "telegram-worker-status",
+        help="Show whether the tmux-backed Telegram worker is running",
+    )
+    worker_status_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
+    )
+    worker_stop_parser = subparsers.add_parser(
+        "telegram-worker-stop",
+        help="Stop the tmux-backed Telegram worker",
+    )
+    worker_stop_parser.add_argument(
+        "--session-name",
+        default=DEFAULT_TELEGRAM_WORKER_SESSION,
+        help="tmux session name for the Telegram worker",
     )
     feishu_parser = subparsers.add_parser(
         "ingest-feishu-event",
@@ -68,10 +239,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command in (None, "status"):
+        from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
+
+        retrieval_mode = TelegramStateStore(sqlite_path=settings.sqlite_path).get_retrieval_mode(
+            settings.retrieval_mode
+        )
         print(
             "XHS Interview Answer Copilot initialized. "
             f"Favorites folder: {settings.xhs_favorites_folder_name}; "
-            f"profile dir: {settings.xhs_profile_dir}"
+            f"profile dir: {settings.xhs_profile_dir}; "
+            f"retrieval mode: {retrieval_mode}"
         )
         return
 
@@ -179,14 +356,17 @@ def main() -> None:
         return
 
     if args.command == "search-similar":
+        from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
         from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
         from xhs_interview_answer_copilot.workflows.retrieve_questions import (
             QuestionRetriever,
         )
 
+        state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
         retriever = QuestionRetriever(
             settings=settings,
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+            retrieval_mode=state_store.get_retrieval_mode(settings.retrieval_mode),
         )
         success, reason, results = retriever.search(
             args.query,
@@ -220,7 +400,7 @@ def main() -> None:
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
             answer_store=AnswerArtifactStore(output_dir=settings.output_dir),
         )
-        success, reason, answer_path, markdown_path = workflow.run(args.note_id)
+        success, reason, answer_path, markdown_path = workflow.run(args.note_id, quick=args.quick)
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"answer_path={answer_path}")
@@ -245,6 +425,73 @@ def main() -> None:
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"stored_count={stored_count}")
+        return
+
+    if args.command == "backfill-full-answers":
+        from xhs_interview_answer_copilot.dispatch.telegram_dispatcher import (
+            TelegramDispatcher,
+        )
+        from xhs_interview_answer_copilot.storage.answer_artifact_store import (
+            AnswerArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
+        from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
+            NormalizedArtifactStore,
+        )
+        from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+        from xhs_interview_answer_copilot.workflows.generate_answers_workflow import (
+            GenerateAnswersWorkflow,
+        )
+        from xhs_interview_answer_copilot.workflows.store_answer_records_workflow import (
+            StoreAnswerRecordsWorkflow,
+        )
+
+        answer_store = AnswerArtifactStore(output_dir=settings.output_dir)
+        vector_store = QuestionVectorStore(sqlite_path=settings.sqlite_path)
+        answer_workflow = GenerateAnswersWorkflow(
+            settings=settings,
+            normalized_store=NormalizedArtifactStore(output_dir=settings.output_dir),
+            vector_store=vector_store,
+            answer_store=answer_store,
+        )
+        success, reason, answer_path, markdown_path = answer_workflow.run(args.note_id)
+        print(f"answer_success={success}")
+        print(f"answer_reason={reason}")
+        print(f"answer_path={answer_path}")
+        print(f"markdown_path={markdown_path}")
+        if not success:
+            raise SystemExit(1)
+        store_workflow = StoreAnswerRecordsWorkflow(
+            settings=settings,
+            answer_store=answer_store,
+            vector_store=vector_store,
+        )
+        store_success, store_reason, stored_count = store_workflow.run(args.note_id)
+        print(f"store_success={store_success}")
+        print(f"store_reason={store_reason}")
+        print(f"stored_count={stored_count}")
+        dispatcher = TelegramDispatcher(
+            settings=settings,
+            answer_store=answer_store,
+            raw_store=RawArtifactStore(output_dir=settings.output_dir),
+        )
+        document_caption = "完整答案已生成，Markdown 文件见附件。"
+        if not store_success:
+            document_caption = "完整答案已生成，Markdown 文件见附件。注意：本地答案记录入库刷新失败。"
+        document_result = dispatcher.send_answer_markdown_document(
+            args.note_id,
+            document_caption,
+        )
+        print(f"document_success={document_result.success}")
+        print(f"document_reason={document_result.reason}")
+        print(f"document_message_id={document_result.message_id}")
+        if not document_result.success:
+            status_result = dispatcher.send_status_message(
+                args.note_id,
+                f"完整答案已生成，但 Markdown 文件发送失败：{document_result.reason}",
+            )
+            print(f"document_failure_notice_success={status_result.success}")
+            print(f"document_failure_notice_reason={status_result.reason}")
         return
 
     if args.command == "reply-telegram":
@@ -278,6 +525,52 @@ def main() -> None:
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"processed_bundles={processed}")
+        return
+
+    if args.command == "process-telegram-daemon":
+        from xhs_interview_answer_copilot.workflows.process_telegram_daemon_workflow import (
+            ProcessTelegramDaemonWorkflow,
+        )
+
+        workflow = ProcessTelegramDaemonWorkflow(settings=settings)
+        result = workflow.run(
+            interval_seconds=args.interval_seconds,
+            failure_backoff_seconds=args.failure_backoff_seconds,
+            max_loops=args.max_loops,
+        )
+        print(f"success={result.success}")
+        print(f"reason={result.reason}")
+        print(f"loops={result.loops}")
+        print(f"processed_bundles={result.processed_bundles}")
+        return
+
+    if args.command == "telegram-worker-start":
+        success, reason, log_path = _start_telegram_worker_in_tmux(
+            session_name=args.session_name,
+            interval_seconds=args.interval_seconds,
+            failure_backoff_seconds=args.failure_backoff_seconds,
+        )
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"session_name={args.session_name}")
+        print(f"log_path={log_path}")
+        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        return
+
+    if args.command == "telegram-worker-status":
+        log_path = _telegram_daemon_log_path_readonly()
+        running = _tmux_available() and _tmux_session_exists(args.session_name)
+        print(f"running={running}")
+        print(f"session_name={args.session_name}")
+        print(f"log_path={log_path}")
+        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        return
+
+    if args.command == "telegram-worker-stop":
+        success, reason = _stop_telegram_worker_in_tmux(args.session_name)
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"session_name={args.session_name}")
         return
 
     if args.command == "ingest-feishu-event":

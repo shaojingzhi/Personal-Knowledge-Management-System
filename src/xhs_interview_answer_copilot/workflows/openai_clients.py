@@ -21,6 +21,7 @@ def build_chat_model(settings: Settings, model_name: str, temperature: float) ->
         base_url=settings.openai_base_url,
         temperature=temperature,
         timeout=settings.openai_timeout_seconds,
+        max_retries=4,
         http_client=client,
     )
 
@@ -39,6 +40,7 @@ def build_embeddings_model(settings: Settings) -> Any:
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         request_timeout=settings.openai_timeout_seconds,
+        max_retries=4,
         http_client=client,
     )
 

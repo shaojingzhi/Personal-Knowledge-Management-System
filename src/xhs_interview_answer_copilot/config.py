@@ -38,6 +38,11 @@ def _read_optional_env(name: str) -> str | None:
     return stripped_value or None
 
 
+def _read_choice_env(name: str, default: str, choices: set[str]) -> str:
+    raw_value = os.getenv(name, default).strip().lower()
+    return raw_value if raw_value in choices else default
+
+
 @dataclass(frozen=True)
 class Settings:
     xhs_browser_mode: str
@@ -60,6 +65,7 @@ class Settings:
     answer_model: str
     retrieval_top_k: int
     retrieval_min_score: float
+    retrieval_mode: str
     telegram_api_base: str
     telegram_proxy_url: str | None
     telegram_bot_token: str | None
@@ -91,6 +97,7 @@ def load_settings() -> Settings:
         answer_model=os.getenv("ANSWER_MODEL", "gpt-4.1-mini"),
         retrieval_top_k=_read_int_env("RETRIEVAL_TOP_K", 3),
         retrieval_min_score=_read_float_env("RETRIEVAL_MIN_SCORE", 0.25),
+        retrieval_mode=_read_choice_env("RETRIEVAL_MODE", "vector", {"vector", "bm25", "hybrid"}),
         telegram_api_base=os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org"),
         telegram_proxy_url=_read_optional_env("TELEGRAM_PROXY_URL"),
         telegram_bot_token=_read_optional_env("TELEGRAM_BOT_TOKEN"),
