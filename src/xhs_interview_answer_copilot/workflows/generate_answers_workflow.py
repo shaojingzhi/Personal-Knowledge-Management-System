@@ -11,6 +11,7 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
+from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
@@ -46,6 +47,7 @@ class GenerateAnswersWorkflow:
         self._normalized_store = normalized_store
         self._vector_store = vector_store
         self._answer_store = answer_store
+        self._state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
 
     def run(self, note_id: str, *, quick: bool = False) -> tuple[bool, str, str | None, str | None]:
         normalized_note = self._normalized_store.load_normalized_note(note_id)
@@ -98,7 +100,8 @@ class GenerateAnswersWorkflow:
         )
 
     def _retrieve_node(self, state: AnswerState) -> dict[str, object]:
-        retriever = QuestionRetriever(self._settings, self._vector_store)
+        retrieval_mode = self._state_store.get_retrieval_mode(self._settings.retrieval_mode)
+        retriever = QuestionRetriever(self._settings, self._vector_store, retrieval_mode=retrieval_mode)
         contexts: dict[str, list[IndexedQuestion]] = {}
         for question in state["normalized_note"].questions:
             success, reason, results = retriever.search(

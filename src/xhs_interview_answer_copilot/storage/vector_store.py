@@ -222,6 +222,44 @@ class QuestionVectorStore:
         scored.sort(key=lambda item: item.score, reverse=True)
         return scored[:top_k]
 
+    def list_indexed_questions(
+        self,
+        exclude_note_id: str | None = None,
+    ) -> list[IndexedQuestion]:
+        with self._connect() as connection:
+            if exclude_note_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT record_id, note_id, note_url, title, summary, question,
+                           category, keywords_json
+                    FROM question_vectors
+                    """
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT record_id, note_id, note_url, title, summary, question,
+                           category, keywords_json
+                    FROM question_vectors
+                    WHERE note_id != ?
+                    """,
+                    (exclude_note_id,),
+                ).fetchall()
+        return [
+            IndexedQuestion(
+                record_id=row[0],
+                note_id=row[1],
+                note_url=row[2],
+                title=row[3],
+                summary=row[4],
+                question=row[5],
+                category=row[6],
+                keywords=json.loads(row[7]),
+                score=0.0,
+            )
+            for row in rows
+        ]
+
     def _cosine_similarity(self, left: list[float], right: list[float]) -> float:
         if len(left) != len(right) or not left or not right:
             return -1.0

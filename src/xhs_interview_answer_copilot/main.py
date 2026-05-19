@@ -239,10 +239,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command in (None, "status"):
+        from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
+
+        retrieval_mode = TelegramStateStore(sqlite_path=settings.sqlite_path).get_retrieval_mode(
+            settings.retrieval_mode
+        )
         print(
             "XHS Interview Answer Copilot initialized. "
             f"Favorites folder: {settings.xhs_favorites_folder_name}; "
-            f"profile dir: {settings.xhs_profile_dir}"
+            f"profile dir: {settings.xhs_profile_dir}; "
+            f"retrieval mode: {retrieval_mode}"
         )
         return
 
@@ -350,14 +356,17 @@ def main() -> None:
         return
 
     if args.command == "search-similar":
+        from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
         from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
         from xhs_interview_answer_copilot.workflows.retrieve_questions import (
             QuestionRetriever,
         )
 
+        state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
         retriever = QuestionRetriever(
             settings=settings,
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+            retrieval_mode=state_store.get_retrieval_mode(settings.retrieval_mode),
         )
         success, reason, results = retriever.search(
             args.query,

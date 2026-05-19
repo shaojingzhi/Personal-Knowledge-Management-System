@@ -100,6 +100,9 @@ class TelegramDispatcher:
             timeout_seconds=10,
         )
 
+    def send_message_to_chat(self, text: str) -> TelegramDispatchResult:
+        return self._send_message(text=text, timeout_seconds=10)
+
     def send_answer_markdown_document(self, note_id: str, caption: str) -> TelegramDispatchResult:
         if self._settings.telegram_bot_token is None or self._settings.telegram_chat_id is None:
             return TelegramDispatchResult(False, "Telegram bot token or chat id is not configured.", None)

@@ -45,6 +45,7 @@ Bootstrap-stage environment variables:
 - `VISION_MODEL`
 - `EMBEDDING_MODEL`
 - `ANSWER_MODEL`
+- `RETRIEVAL_MODE`
 - `RETRIEVAL_TOP_K`
 - `RETRIEVAL_MIN_SCORE`
 - `TELEGRAM_BOT_TOKEN`
@@ -96,7 +97,9 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 
 `xhs-copilot normalize-note <note_id>` is the first LangGraph-based step. It loads `raw.json` from either a web note bundle or a Telegram bundle, calls an LLM through LangChain structured output, and writes `normalized.json` under `OUTPUT_DIR`.
 
-`xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs similarity retrieval over those indexed questions.
+`xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs retrieval over those indexed questions using the current retrieval mode.
+
+`RETRIEVAL_MODE` supports `vector`, `bm25`, and `hybrid`. `vector` uses embeddings, `bm25` uses local text scoring over the indexed question corpus, and `hybrid` merges both rankings. The active default mode can also be changed from Telegram by sending a message that is exactly `[vector]`, `[bm25]`, or `[hybrid]`.
 
 `xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
 

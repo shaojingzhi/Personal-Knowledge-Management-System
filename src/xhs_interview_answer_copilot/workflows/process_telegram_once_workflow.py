@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from importlib import import_module
 from pathlib import Path
 import subprocess
@@ -44,6 +45,8 @@ class BundleProcessState(TypedDict):
 
 
 class ProcessTelegramOnceWorkflow:
+    _RETRIEVAL_MODE_COMMAND_PATTERN = re.compile(r"^\s*\[(vector|bm25|hybrid)\]\s*$", re.IGNORECASE)
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._raw_store = RawArtifactStore(output_dir=settings.output_dir)
@@ -65,19 +68,83 @@ class ProcessTelegramOnceWorkflow:
         if ingest_result.saved_bundles == 0:
             return True, ingest_result.reason, []
 
-        grouped_bundle_ids = self._group_bundle_ids(ingest_result.bundle_ids)
         processed: list[str] = []
-        for bundle_id in grouped_bundle_ids:
+        pending_content_ids: list[str] = []
+        for bundle_id in ingest_result.bundle_ids:
+            if self._is_retrieval_mode_command(bundle_id):
+                if pending_content_ids:
+                    success, reason = self._process_content_batch(
+                        pending_content_ids,
+                        previous_update_id=previous_update_id,
+                        processed=processed,
+                    )
+                    if not success:
+                        return False, reason, processed
+                    pending_content_ids = []
+                self._handle_retrieval_mode_command(bundle_id)
+                self._commit_processed_bundle(bundle_id)
+                processed.append(bundle_id)
+                continue
+            pending_content_ids.append(bundle_id)
+
+        if pending_content_ids:
+            success, reason = self._process_content_batch(
+                pending_content_ids,
+                previous_update_id=previous_update_id,
+                processed=processed,
+            )
+            if not success:
+                return False, reason, processed
+        return True, "Telegram processing completed.", processed
+
+    def _process_content_batch(
+        self,
+        bundle_ids: list[str],
+        *,
+        previous_update_id: int | None,
+        processed: list[str],
+    ) -> tuple[bool, str]:
+        for bundle_id in self._group_bundle_ids(bundle_ids):
             self._send_status(bundle_id, "✅ 已收到内容，开始 OCR/解析面试题。图片较大时可能需要几分钟。")
             success, reason = self._process_bundle(bundle_id)
             if not success:
                 self._send_status(bundle_id, f"❌ 处理失败：{reason}")
                 if not processed:
                     self._restore_offset(previous_update_id, bundle_id)
-                return False, f"{bundle_id}: {reason}", processed
+                return False, f"{bundle_id}: {reason}"
             self._commit_processed_bundle(bundle_id)
             processed.append(bundle_id)
-        return True, "Telegram processing completed.", processed
+        return True, "ok"
+
+    def _is_retrieval_mode_command(self, bundle_id: str) -> bool:
+        source_bundle = self._load_source_bundle(bundle_id)
+        if source_bundle is None:
+            return False
+        joined_text = "\n".join(source_bundle.text_blocks).strip()
+        if not joined_text:
+            return False
+        return self._RETRIEVAL_MODE_COMMAND_PATTERN.fullmatch(joined_text) is not None
+
+    def _handle_retrieval_mode_command(self, bundle_id: str) -> bool:
+        source_bundle = self._load_source_bundle(bundle_id)
+        if source_bundle is None:
+            return False
+        joined_text = "\n".join(source_bundle.text_blocks).strip()
+        match = self._RETRIEVAL_MODE_COMMAND_PATTERN.fullmatch(joined_text)
+        if match is None:
+            return False
+        mode = match.group(1).lower()
+        updated = self._state_store.set_retrieval_mode(mode)
+        dispatcher = TelegramDispatcher(
+            settings=self._settings,
+            answer_store=self._answer_store,
+            raw_store=self._raw_store,
+        )
+        if updated:
+            dispatcher.send_status_message(bundle_id, f"✅ 默认检索模式已切换为 `{mode}`")
+        else:
+            dispatcher.send_status_message(bundle_id, f"❌ 无法切换检索模式：{mode}")
+        return True
 
     def _restore_offset(self, previous_update_id: int | None, failed_bundle_id: str) -> None:
         failed_update_id = self._extract_update_id(failed_bundle_id)
