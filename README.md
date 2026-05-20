@@ -66,6 +66,7 @@ After installing the package in editable mode, run:
 - `xhs-copilot normalize-note <note_id>`
 - `xhs-copilot index-note <note_id>`
 - `xhs-copilot search-similar <query>`
+- `xhs-copilot eval-retrieval <dataset.json>`
 - `xhs-copilot generate-answers <note_id>`
 - `xhs-copilot generate-answers <note_id> --quick`
 - `xhs-copilot backfill-full-answers <note_id>`
@@ -100,6 +101,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 `xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs retrieval over those indexed questions using the current retrieval mode.
 
 `RETRIEVAL_MODE` supports `vector`, `bm25`, and `hybrid`. `vector` uses embeddings, `bm25` uses local text scoring over the indexed question corpus, and `hybrid` merges both rankings. The active default mode can also be changed from Telegram by sending a message that is exactly `[vector]`, `[bm25]`, or `[hybrid]`.
+
+`xhs-copilot eval-retrieval <dataset.json>` runs a fixed retrieval benchmark across `vector`, `bm25`, and `hybrid` modes, scores each mode with Recall@K, MRR, Hit@1, keyword coverage, and average latency, and writes JSON/Markdown reports under `OUTPUT_DIR/evals/`.
 
 `xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
 
