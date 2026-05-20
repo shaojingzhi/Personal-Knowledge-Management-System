@@ -133,6 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
         "search-similar", help="Search similar indexed interview questions"
     )
     search_parser.add_argument("query", help="Free-text query for similarity retrieval")
+    eval_parser = subparsers.add_parser(
+        "eval-retrieval",
+        help="Evaluate vector, bm25, and hybrid retrieval modes on a fixed dataset",
+    )
+    eval_parser.add_argument("dataset_path", help="Path to the retrieval evaluation JSON dataset")
+    eval_parser.add_argument(
+        "--modes",
+        nargs="+",
+        default=None,
+        help="Optional subset of retrieval modes to evaluate: vector bm25 hybrid",
+    )
     answer_parser = subparsers.add_parser(
         "generate-answers", help="Generate RAG-based answers for one normalized note"
     )
@@ -380,6 +391,25 @@ def main() -> None:
                 f"score={result.score:.4f} note_id={result.note_id} "
                 f"category={result.category} question={result.question}"
             )
+        return
+
+    if args.command == "eval-retrieval":
+        from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+        from xhs_interview_answer_copilot.workflows.eval_retrieval_workflow import (
+            EvalRetrievalWorkflow,
+        )
+
+        workflow = EvalRetrievalWorkflow(
+            settings=settings,
+            vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+        )
+        result = workflow.run(args.dataset_path, modes=args.modes)
+        print(f"success={result.success}")
+        print(f"reason={result.reason}")
+        print(f"report_json_path={result.report_json_path}")
+        print(f"report_markdown_path={result.report_markdown_path}")
+        if not result.success:
+            raise SystemExit(1)
         return
 
     if args.command == "generate-answers":

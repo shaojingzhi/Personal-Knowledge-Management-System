@@ -1,0 +1,22 @@
+[
+  {
+    "question": "介绍一个你主导的AI应用项目，核心目标、技术选型、效果指标以及最终业务收益是什么？",
+    "expected_note_ids": ["telegram_945080660"],
+    "expected_keywords": ["AI应用", "业务收益", "技术选型"]
+  },
+  {
+    "question": "RAG和 Fine-tuning的本质区别是什么？各自适用场景？",
+    "expected_note_ids": ["telegram_945080671", "telegram_945080672"],
+    "expected_keywords": ["RAG", "Fine-tuning", "适用场景"]
+  },
+  {
+    "question": "介绍一下 PPO、DPO 和 GRPO 的区别？",
+    "expected_note_ids": ["telegram_945080671", "telegram_945080672"],
+    "expected_keywords": ["PPO", "DPO", "GRPO"]
+  },
+  {
+    "question": "为什么现在的 Agent 框架倾向于用 Grep 而不是向量检索来查代码？",
+    "expected_note_ids": ["telegram_945080671", "telegram_945080672"],
+    "expected_keywords": ["Grep", "向量检索", "代码"]
+  }
+]
