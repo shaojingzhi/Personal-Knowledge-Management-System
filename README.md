@@ -59,6 +59,10 @@ Bootstrap-stage environment variables:
 After installing the package in editable mode, run:
 
 - `xhs-copilot status`
+- `xhs-copilot project use <path>`
+- `xhs-copilot project current`
+- `xhs-copilot project refresh`
+- `xhs-copilot project clear`
 - `xhs-copilot login`
 - `xhs-copilot healthcheck`
 - `xhs-copilot discover`
@@ -102,6 +106,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 
 `RETRIEVAL_MODE` supports `vector`, `bm25`, and `hybrid`. `vector` uses embeddings, `bm25` uses local text scoring over the indexed question corpus, and `hybrid` merges both rankings. The active default mode can also be changed from Telegram by sending a message that is exactly `[vector]`, `[bm25]`, or `[hybrid]`.
 
+Project-aware answering is backend-only in the first implementation and does not require a frontend. Use `xhs-copilot project use <path>` to set the active repository, `xhs-copilot project current` to inspect it, `xhs-copilot project refresh` to rebuild the cached structured summary under `OUTPUT_DIR/project-context/`, and `xhs-copilot project clear` to remove the current selection. Project-specific interview questions such as asking how the current project implements memory, retrieval, orchestration, or background workers will inject that cached project context into answer generation when the question explicitly refers to the current project.
+
 `xhs-copilot eval-retrieval <dataset.json>` runs a fixed retrieval benchmark across `vector`, `bm25`, and `hybrid` modes, scores each mode with Recall@K, MRR, Hit@1, keyword coverage, and average latency, and writes JSON/Markdown reports under `OUTPUT_DIR/evals/`.
 
 `xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
@@ -113,6 +119,8 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 `xhs-copilot process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
 
 Telegram orchestration now sends progress messages while it OCRs, normalizes, indexes, generates, stores, and replies, so large image notes do not look stuck. It sends a quick local answer first so image notes can be acknowledged quickly. A non-blocking `backfill-full-answers` process is started after the Telegram reply to regenerate full LLM answers, refresh stored answer records when possible, and send the completed `answer.md` file back to Telegram as a document.
+
+The Telegram worker also supports explicit control commands. Send `[project:/absolute/or/relative/path]` to switch the active project and rebuild its cached context, or `[project-refresh]` to refresh the cached summary for the current active project. These commands are handled conservatively like retrieval-mode switches and do not require a separate frontend.
 
 `xhs-copilot process-telegram-daemon` runs the same Telegram pipeline in a loop so the project can behave like a resident local worker. Use `--interval-seconds` to control the normal polling cadence, `--failure-backoff-seconds` to slow down after failures such as provider rate limits, and `--max-loops` for local testing.
 

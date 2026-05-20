@@ -16,9 +16,13 @@ from xhs_interview_answer_copilot.storage.answer_artifact_store import AnswerArt
 from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
+from xhs_interview_answer_copilot.storage.project_context_store import ProjectContextStore
 from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+from xhs_interview_answer_copilot.workflows.project_context_workflow import (
+    ProjectContextWorkflow,
+)
 from xhs_interview_answer_copilot.workflows.schemas import SourceBundle
 
 STAGE_TIMEOUT_SECONDS = {
@@ -46,6 +50,8 @@ class BundleProcessState(TypedDict):
 
 class ProcessTelegramOnceWorkflow:
     _RETRIEVAL_MODE_COMMAND_PATTERN = re.compile(r"^\s*\[(vector|bm25|hybrid)\]\s*$", re.IGNORECASE)
+    _PROJECT_SWITCH_COMMAND_PATTERN = re.compile(r"^\s*\[project:(.+)\]\s*$", re.IGNORECASE)
+    _PROJECT_REFRESH_COMMAND_PATTERN = re.compile(r"^\s*\[project-refresh\]\s*$", re.IGNORECASE)
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -54,6 +60,9 @@ class ProcessTelegramOnceWorkflow:
         self._answer_store = AnswerArtifactStore(output_dir=settings.output_dir)
         self._state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
         self._vector_store = QuestionVectorStore(sqlite_path=settings.sqlite_path)
+        self._project_context_workflow = ProjectContextWorkflow(
+            project_context_store=ProjectContextStore(output_dir=settings.output_dir)
+        )
 
     def run_once(self) -> tuple[bool, str, list[str]]:
         previous_update_id = self._state_store.get_last_update_id()
@@ -71,7 +80,7 @@ class ProcessTelegramOnceWorkflow:
         processed: list[str] = []
         pending_content_ids: list[str] = []
         for bundle_id in ingest_result.bundle_ids:
-            if self._is_retrieval_mode_command(bundle_id):
+            if self._is_control_command(bundle_id):
                 if pending_content_ids:
                     success, reason = self._process_content_batch(
                         pending_content_ids,
@@ -81,7 +90,7 @@ class ProcessTelegramOnceWorkflow:
                     if not success:
                         return False, reason, processed
                     pending_content_ids = []
-                self._handle_retrieval_mode_command(bundle_id)
+                self._handle_control_command(bundle_id)
                 self._commit_processed_bundle(bundle_id)
                 processed.append(bundle_id)
                 continue
@@ -125,6 +134,40 @@ class ProcessTelegramOnceWorkflow:
             return False
         return self._RETRIEVAL_MODE_COMMAND_PATTERN.fullmatch(joined_text) is not None
 
+    def _is_project_switch_command(self, bundle_id: str) -> bool:
+        source_bundle = self._load_source_bundle(bundle_id)
+        if source_bundle is None:
+            return False
+        joined_text = "\n".join(source_bundle.text_blocks).strip()
+        if not joined_text:
+            return False
+        return self._PROJECT_SWITCH_COMMAND_PATTERN.fullmatch(joined_text) is not None
+
+    def _is_project_refresh_command(self, bundle_id: str) -> bool:
+        source_bundle = self._load_source_bundle(bundle_id)
+        if source_bundle is None:
+            return False
+        joined_text = "\n".join(source_bundle.text_blocks).strip()
+        if not joined_text:
+            return False
+        return self._PROJECT_REFRESH_COMMAND_PATTERN.fullmatch(joined_text) is not None
+
+    def _is_control_command(self, bundle_id: str) -> bool:
+        return (
+            self._is_retrieval_mode_command(bundle_id)
+            or self._is_project_switch_command(bundle_id)
+            or self._is_project_refresh_command(bundle_id)
+        )
+
+    def _handle_control_command(self, bundle_id: str) -> bool:
+        if self._is_retrieval_mode_command(bundle_id):
+            return self._handle_retrieval_mode_command(bundle_id)
+        if self._is_project_switch_command(bundle_id):
+            return self._handle_project_switch_command(bundle_id)
+        if self._is_project_refresh_command(bundle_id):
+            return self._handle_project_refresh_command(bundle_id)
+        return False
+
     def _handle_retrieval_mode_command(self, bundle_id: str) -> bool:
         source_bundle = self._load_source_bundle(bundle_id)
         if source_bundle is None:
@@ -144,6 +187,70 @@ class ProcessTelegramOnceWorkflow:
             dispatcher.send_status_message(bundle_id, f"✅ 默认检索模式已切换为 `{mode}`")
         else:
             dispatcher.send_status_message(bundle_id, f"❌ 无法切换检索模式：{mode}")
+        return True
+
+    def _handle_project_switch_command(self, bundle_id: str) -> bool:
+        source_bundle = self._load_source_bundle(bundle_id)
+        if source_bundle is None:
+            return False
+        joined_text = "\n".join(source_bundle.text_blocks).strip()
+        match = self._PROJECT_SWITCH_COMMAND_PATTERN.fullmatch(joined_text)
+        if match is None:
+            return False
+        dispatcher = TelegramDispatcher(
+            settings=self._settings,
+            answer_store=self._answer_store,
+            raw_store=self._raw_store,
+        )
+        raw_path = match.group(1).strip()
+        candidate = Path(raw_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        resolved_path = candidate.resolve()
+        if not resolved_path.exists():
+            dispatcher.send_status_message(bundle_id, f"❌ 项目路径不存在：`{resolved_path}`")
+            return True
+        if not resolved_path.is_dir():
+            dispatcher.send_status_message(bundle_id, f"❌ 项目路径不是目录：`{resolved_path}`")
+            return True
+        success, reason, _, context_path = self._project_context_workflow.run(
+            str(resolved_path),
+            force_refresh=True,
+        )
+        if success:
+            self._state_store.set_active_project_path(str(resolved_path))
+            dispatcher.send_status_message(
+                bundle_id,
+                f"✅ 当前项目已切换为 `{resolved_path}`\n📦 项目上下文已刷新：`{context_path}`",
+            )
+            return True
+        dispatcher.send_status_message(
+            bundle_id,
+            f"❌ 项目切换失败：无法为 `{resolved_path}` 刷新项目上下文。原因：{reason}",
+        )
+        return True
+
+    def _handle_project_refresh_command(self, bundle_id: str) -> bool:
+        dispatcher = TelegramDispatcher(
+            settings=self._settings,
+            answer_store=self._answer_store,
+            raw_store=self._raw_store,
+        )
+        active_project_path = self._state_store.get_active_project_path()
+        if active_project_path is None:
+            dispatcher.send_status_message(bundle_id, "❌ 当前没有已配置项目，无法刷新项目上下文。")
+            return True
+        success, reason, _, context_path = self._project_context_workflow.run(
+            active_project_path,
+            force_refresh=True,
+        )
+        if not success:
+            dispatcher.send_status_message(bundle_id, f"❌ 项目上下文刷新失败：{reason}")
+            return True
+        dispatcher.send_status_message(
+            bundle_id,
+            f"✅ 项目上下文已刷新。\n📦 当前项目：`{active_project_path}`\n📄 缓存文件：`{context_path}`",
+        )
         return True
 
     def _restore_offset(self, previous_update_id: int | None, failed_bundle_id: str) -> None:

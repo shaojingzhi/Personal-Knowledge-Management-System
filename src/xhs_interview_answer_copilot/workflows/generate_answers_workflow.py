@@ -10,23 +10,33 @@ from xhs_interview_answer_copilot.storage.answer_artifact_store import AnswerArt
 from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
-from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
+from xhs_interview_answer_copilot.storage.project_context_store import ProjectContextStore
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
+from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.project_context_workflow import (
+    ProjectContextWorkflow,
+)
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
 from xhs_interview_answer_copilot.workflows.schemas import (
     GeneratedAnswerItem,
     GeneratedAnswerSet,
     InterviewQuestion,
     NormalizedNote,
+    ProjectContext,
 )
 
 
 class AnswerState(TypedDict):
     note_id: str
     normalized_note: NormalizedNote
+    project_question_flags: NotRequired[dict[str, bool]]
+    needs_project_context: NotRequired[bool]
+    needs_general_retrieval: NotRequired[bool]
+    project_context: NotRequired[ProjectContext]
+    project_context_warning: NotRequired[str]
     retrieved_context: NotRequired[dict[str, list[IndexedQuestion]]]
     answer_set: NotRequired[GeneratedAnswerSet]
     answer_path: NotRequired[str]
@@ -48,6 +58,9 @@ class GenerateAnswersWorkflow:
         self._vector_store = vector_store
         self._answer_store = answer_store
         self._state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
+        self._project_context_workflow = ProjectContextWorkflow(
+            project_context_store=ProjectContextStore(output_dir=settings.output_dir)
+        )
 
     def run(self, note_id: str, *, quick: bool = False) -> tuple[bool, str, str | None, str | None]:
         normalized_note = self._normalized_store.load_normalized_note(note_id)
@@ -81,10 +94,14 @@ class GenerateAnswersWorkflow:
             StateGraph = graph_module.StateGraph
 
             graph = StateGraph(AnswerState)
+            graph.add_node("plan_context", self._plan_context_node)
+            graph.add_node("load_project_context", self._load_project_context_node)
             graph.add_node("retrieve", self._retrieve_node)
             graph.add_node("generate", self._generate_node)
             graph.add_node("save", self._save_node)
-            graph.add_edge(START, "retrieve")
+            graph.add_edge(START, "plan_context")
+            graph.add_edge("plan_context", "load_project_context")
+            graph.add_edge("load_project_context", "retrieve")
             graph.add_edge("retrieve", "generate")
             graph.add_edge("generate", "save")
             graph.add_edge("save", END)
@@ -99,7 +116,39 @@ class GenerateAnswersWorkflow:
             result.get("markdown_path"),
         )
 
+    def _plan_context_node(self, state: AnswerState) -> dict[str, object]:
+        project_question_flags = {
+            question.question: self._is_project_related_question(question.question)
+            for question in state["normalized_note"].questions
+        }
+        return {
+            "project_question_flags": project_question_flags,
+            "needs_project_context": any(project_question_flags.values()),
+            "needs_general_retrieval": bool(project_question_flags),
+        }
+
+    def _load_project_context_node(self, state: AnswerState) -> dict[str, object]:
+        if not state.get("needs_project_context"):
+            return {}
+        active_project_path = self._state_store.get_active_project_path()
+        if active_project_path is None:
+            return {
+                "project_context_warning": (
+                    "No active project is configured. Do not invent repository-specific implementation details."
+                )
+            }
+        success, reason, project_context, _ = self._project_context_workflow.run(active_project_path)
+        if not success or project_context is None:
+            return {
+                "project_context_warning": (
+                    f"Project context is unavailable: {reason}. Do not invent repository-specific implementation details."
+                )
+            }
+        return {"project_context": project_context}
+
     def _retrieve_node(self, state: AnswerState) -> dict[str, object]:
+        if not state.get("needs_general_retrieval", True):
+            return {"retrieved_context": {}}
         retrieval_mode = self._state_store.get_retrieval_mode(self._settings.retrieval_mode)
         retriever = QuestionRetriever(self._settings, self._vector_store, retrieval_mode=retrieval_mode)
         contexts: dict[str, list[IndexedQuestion]] = {}
@@ -133,7 +182,7 @@ class GenerateAnswersWorkflow:
             [
                 (
                     "system",
-                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage. If a question is algorithmic, include a Python reference implementation in the code field. For non-algorithm questions, leave the code field empty.",
+                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage. If project context is provided for a question about the current project, prioritize the repository-specific implementation and design tradeoffs from that context. If project context is unavailable, say so briefly and answer at a general engineering level instead of inventing details. If a question is algorithmic, include a Python reference implementation in the code field. For non-algorithm questions, leave the code field empty.",
                 ),
                 (
                     "human",
@@ -145,6 +194,9 @@ class GenerateAnswersWorkflow:
                     "title: {title}\n"
                     "summary: {summary}\n"
                     "questions: {questions}\n"
+                    "project_question_flags: {project_question_flags}\n"
+                    "project_context: {project_context}\n"
+                    "project_context_warning: {project_context_warning}\n"
                     "retrieved_context: {retrieved_context}",
                 ),
             ]
@@ -159,6 +211,9 @@ class GenerateAnswersWorkflow:
                     normalized_note=normalized_note,
                     questions=batch,
                     retrieved_context=retrieved_context,
+                    project_question_flags=state.get("project_question_flags", {}),
+                    project_context=state.get("project_context"),
+                    project_context_warning=state.get("project_context_warning", ""),
                 )
             )
         answer_set = GeneratedAnswerSet(
@@ -233,6 +288,29 @@ class GenerateAnswersWorkflow:
         coding_markers = ["手撕", "编程题", "路径查询器", "写代码", "实现一个", "实现一个简易"]
         return any(marker in lowered for marker in coding_markers)
 
+    def _is_project_related_question(self, question_text: str) -> bool:
+        lowered = question_text.lower()
+        project_markers = [
+            "当前项目",
+            "本项目",
+            "这个项目",
+            "该项目",
+            "项目里",
+            "项目中",
+            "当前仓库",
+            "这个仓库",
+            "this project",
+            "current project",
+            "this repo",
+            "current repo",
+        ]
+        return any(marker in lowered for marker in project_markers)
+
+    def _format_project_context(self, project_context: ProjectContext | None) -> str:
+        if project_context is None:
+            return ""
+        return json.dumps(project_context.model_dump(mode="json"), ensure_ascii=False)
+
     def _format_retrieved_context(
         self,
         questions: list[InterviewQuestion],
@@ -263,6 +341,9 @@ class GenerateAnswersWorkflow:
         normalized_note: NormalizedNote,
         questions: list[InterviewQuestion],
         retrieved_context: dict[str, list[IndexedQuestion]],
+        project_question_flags: dict[str, bool],
+        project_context: ProjectContext | None,
+        project_context_warning: str,
     ) -> list:
         try:
             response = invoke_with_retry(
@@ -277,6 +358,15 @@ class GenerateAnswersWorkflow:
                         [question.model_dump(mode="json") for question in questions],
                         ensure_ascii=False,
                     ),
+                    "project_question_flags": json.dumps(
+                        {
+                            question.question: project_question_flags.get(question.question, False)
+                            for question in questions
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "project_context": self._format_project_context(project_context),
+                    "project_context_warning": project_context_warning,
                     "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
                 },
             )
@@ -296,6 +386,9 @@ class GenerateAnswersWorkflow:
                         normalized_note=normalized_note,
                         questions=[question],
                         retrieved_context=retrieved_context,
+                        project_question_flags=project_question_flags,
+                        project_context=project_context,
+                        project_context_warning=project_context_warning,
                     )
                 )
             return answers

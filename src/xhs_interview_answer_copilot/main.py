@@ -16,6 +16,13 @@ def _tmux_available() -> bool:
     return shutil.which("tmux") is not None
 
 
+def _resolve_project_path(path_text: str) -> Path:
+    candidate = Path(path_text).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return candidate.resolve()
+
+
 def _tmux_session_exists(session_name: str) -> bool:
     result = subprocess.run(
         ["tmux", "has-session", "-t", session_name],
@@ -108,6 +115,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("status", help="Show current bootstrap configuration")
+    project_parser = subparsers.add_parser(
+        "project", help="Manage the active project context for project-aware answers"
+    )
+    project_subparsers = project_parser.add_subparsers(dest="project_command")
+    project_use_parser = project_subparsers.add_parser(
+        "use", help="Set the active project directory"
+    )
+    project_use_parser.add_argument("path", help="Path to the project directory")
+    project_subparsers.add_parser(
+        "current", help="Show the current active project directory"
+    )
+    project_subparsers.add_parser(
+        "refresh", help="Refresh the cached context for the current active project"
+    )
+    project_subparsers.add_parser("clear", help="Clear the current active project directory")
     subparsers.add_parser(
         "login", help="Open a persistent Xiaohongshu browser profile for login"
     )
@@ -252,16 +274,74 @@ def main() -> None:
     if args.command in (None, "status"):
         from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 
-        retrieval_mode = TelegramStateStore(sqlite_path=settings.sqlite_path).get_retrieval_mode(
-            settings.retrieval_mode
-        )
+        state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
+        retrieval_mode = state_store.get_retrieval_mode(settings.retrieval_mode)
+        active_project_path = state_store.get_active_project_path() or "N/A"
         print(
             "XHS Interview Answer Copilot initialized. "
             f"Favorites folder: {settings.xhs_favorites_folder_name}; "
             f"profile dir: {settings.xhs_profile_dir}; "
-            f"retrieval mode: {retrieval_mode}"
+            f"retrieval mode: {retrieval_mode}; "
+            f"active project: {active_project_path}"
         )
         return
+
+    if args.command == "project":
+        from xhs_interview_answer_copilot.storage.project_context_store import (
+            ProjectContextStore,
+        )
+        from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
+        from xhs_interview_answer_copilot.workflows.project_context_workflow import (
+            ProjectContextWorkflow,
+        )
+
+        state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
+        if args.project_command == "use":
+            resolved_path = _resolve_project_path(args.path)
+            if not resolved_path.exists():
+                print("success=False")
+                print(f"reason=Project path does not exist: {resolved_path}")
+                raise SystemExit(1)
+            if not resolved_path.is_dir():
+                print("success=False")
+                print(f"reason=Project path is not a directory: {resolved_path}")
+                raise SystemExit(1)
+            state_store.set_active_project_path(str(resolved_path))
+            print("success=True")
+            print("reason=Active project updated.")
+            print(f"active_project_path={resolved_path}")
+            return
+        if args.project_command == "current":
+            active_project_path = state_store.get_active_project_path()
+            print(f"configured={active_project_path is not None}")
+            print(f"active_project_path={active_project_path or ''}")
+            return
+        if args.project_command == "refresh":
+            active_project_path = state_store.get_active_project_path()
+            if active_project_path is None:
+                print("success=False")
+                print("reason=No active project configured.")
+                raise SystemExit(1)
+            workflow = ProjectContextWorkflow(
+                project_context_store=ProjectContextStore(output_dir=settings.output_dir)
+            )
+            success, reason, _, context_path = workflow.run(
+                active_project_path,
+                force_refresh=True,
+            )
+            print(f"success={success}")
+            print(f"reason={reason}")
+            print(f"active_project_path={active_project_path}")
+            print(f"project_context_path={context_path}")
+            if not success:
+                raise SystemExit(1)
+            return
+        if args.project_command == "clear":
+            state_store.clear_active_project_path()
+            print("success=True")
+            print("reason=Active project cleared.")
+            return
+        parser.error("Unknown or missing project subcommand.")
 
     if args.command == "login":
         from xhs_interview_answer_copilot.collectors.browser_session import (

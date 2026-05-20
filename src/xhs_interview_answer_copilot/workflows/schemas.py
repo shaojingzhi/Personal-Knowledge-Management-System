@@ -93,3 +93,30 @@ class GeneratedAnswerSet(BaseModel):
         default_factory=list,
         description="Generated answer set for all extracted questions.",
     )
+
+
+class ProjectContext(BaseModel):
+    project_name: str = Field(description="Resolved project name.")
+    project_path: str = Field(description="Absolute path to the active project root.")
+    summary: str = Field(description="Short overview of what the project does.")
+    tech_stack: list[str] = Field(
+        default_factory=list,
+        description="Relevant technologies, frameworks, and infrastructure pieces.",
+    )
+    memory_system: str = Field(
+        description="How the project persists memory, state, or reusable artifacts.",
+    )
+    retrieval_system: str = Field(
+        description="How the project retrieves prior knowledge or indexed records.",
+    )
+    workflow_orchestration: str = Field(
+        description="How the project coordinates its main execution flow.",
+    )
+    storage: str = Field(description="How the project stores durable state and artifacts.")
+    background_jobs: str = Field(
+        description="How the project handles long-running or background work.",
+    )
+    key_files: list[str] = Field(
+        default_factory=list,
+        description="Repository-relative files that best support the summary.",
+    )

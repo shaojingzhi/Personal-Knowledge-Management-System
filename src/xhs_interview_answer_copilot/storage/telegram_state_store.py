@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 class TelegramStateStore:
+    _ACTIVE_PROJECT_PATH_KEY = "active_project_path"
     _RETRIEVAL_MODE_KEY = "retrieval_mode"
     _TELEGRAM_OFFSET_KEY = "telegram_last_update_id"
     _VALID_RETRIEVAL_MODES = {"vector", "bm25", "hybrid"}
@@ -72,3 +73,32 @@ class TelegramStateStore:
                 (self._RETRIEVAL_MODE_KEY, normalized_mode),
             )
         return True
+
+    def get_active_project_path(self) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT state_value FROM bot_state WHERE state_key = ?",
+                (self._ACTIVE_PROJECT_PATH_KEY,),
+            ).fetchone()
+        if row is None:
+            return None
+        value = str(row[0]).strip()
+        return value or None
+
+    def set_active_project_path(self, project_path: str) -> None:
+        normalized_path = project_path.strip()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO bot_state (state_key, state_value)
+                VALUES (?, ?)
+                """,
+                (self._ACTIVE_PROJECT_PATH_KEY, normalized_path),
+            )
+
+    def clear_active_project_path(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM bot_state WHERE state_key = ?",
+                (self._ACTIVE_PROJECT_PATH_KEY,),
+            )
