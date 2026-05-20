@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, UTC
 import json
 from importlib import import_module
+from pathlib import Path
 from typing import Any, cast
 from typing import NotRequired, TypedDict
 
@@ -10,12 +12,21 @@ from xhs_interview_answer_copilot.storage.answer_artifact_store import AnswerArt
 from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
+from xhs_interview_answer_copilot.storage.project_answer_memory_store import (
+    ProjectAnswerMemoryStore,
+)
+from xhs_interview_answer_copilot.storage.project_deep_context_store import (
+    ProjectDeepContextStore,
+)
 from xhs_interview_answer_copilot.storage.project_context_store import ProjectContextStore
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
 from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.project_deep_scan_workflow import (
+    ProjectDeepScanWorkflow,
+)
 from xhs_interview_answer_copilot.workflows.project_context_workflow import (
     ProjectContextWorkflow,
 )
@@ -25,7 +36,9 @@ from xhs_interview_answer_copilot.workflows.schemas import (
     GeneratedAnswerSet,
     InterviewQuestion,
     NormalizedNote,
+    ProjectAnswerMemoryRecord,
     ProjectContext,
+    ProjectDeepContext,
 )
 
 
@@ -33,10 +46,15 @@ class AnswerState(TypedDict):
     note_id: str
     normalized_note: NormalizedNote
     project_question_flags: NotRequired[dict[str, bool]]
+    project_question_topics: NotRequired[dict[str, str]]
     needs_project_context: NotRequired[bool]
+    needs_deep_project_scan: NotRequired[bool]
     needs_general_retrieval: NotRequired[bool]
+    active_project_path: NotRequired[str]
     project_context: NotRequired[ProjectContext]
     project_context_warning: NotRequired[str]
+    deep_project_contexts: NotRequired[dict[str, ProjectDeepContext]]
+    project_answer_memory: NotRequired[dict[str, list[ProjectAnswerMemoryRecord]]]
     retrieved_context: NotRequired[dict[str, list[IndexedQuestion]]]
     answer_set: NotRequired[GeneratedAnswerSet]
     answer_path: NotRequired[str]
@@ -58,6 +76,10 @@ class GenerateAnswersWorkflow:
         self._vector_store = vector_store
         self._answer_store = answer_store
         self._state_store = TelegramStateStore(sqlite_path=settings.sqlite_path)
+        self._project_answer_memory_store = ProjectAnswerMemoryStore(output_dir=settings.output_dir)
+        self._project_deep_scan_workflow = ProjectDeepScanWorkflow(
+            project_deep_context_store=ProjectDeepContextStore(output_dir=settings.output_dir)
+        )
         self._project_context_workflow = ProjectContextWorkflow(
             project_context_store=ProjectContextStore(output_dir=settings.output_dir)
         )
@@ -96,12 +118,16 @@ class GenerateAnswersWorkflow:
             graph = StateGraph(AnswerState)
             graph.add_node("plan_context", self._plan_context_node)
             graph.add_node("load_project_context", self._load_project_context_node)
+            graph.add_node("load_deep_project_context", self._load_deep_project_context_node)
+            graph.add_node("load_project_answer_memory", self._load_project_answer_memory_node)
             graph.add_node("retrieve", self._retrieve_node)
             graph.add_node("generate", self._generate_node)
             graph.add_node("save", self._save_node)
             graph.add_edge(START, "plan_context")
             graph.add_edge("plan_context", "load_project_context")
-            graph.add_edge("load_project_context", "retrieve")
+            graph.add_edge("load_project_context", "load_deep_project_context")
+            graph.add_edge("load_deep_project_context", "load_project_answer_memory")
+            graph.add_edge("load_project_answer_memory", "retrieve")
             graph.add_edge("retrieve", "generate")
             graph.add_edge("generate", "save")
             graph.add_edge("save", END)
@@ -121,10 +147,21 @@ class GenerateAnswersWorkflow:
             question.question: self._is_project_related_question(question.question)
             for question in state["normalized_note"].questions
         }
+        project_question_topics = {
+            question.question: self._detect_project_topic(question.question)
+            for question in state["normalized_note"].questions
+            if project_question_flags[question.question]
+        }
         return {
             "project_question_flags": project_question_flags,
+            "project_question_topics": project_question_topics,
             "needs_project_context": any(project_question_flags.values()),
-            "needs_general_retrieval": bool(project_question_flags),
+            "needs_deep_project_scan": any(
+                self._needs_deep_project_scan(question)
+                for question in state["normalized_note"].questions
+                if project_question_flags[question.question]
+            ),
+            "needs_general_retrieval": True,
         }
 
     def _load_project_context_node(self, state: AnswerState) -> dict[str, object]:
@@ -133,6 +170,7 @@ class GenerateAnswersWorkflow:
         active_project_path = self._state_store.get_active_project_path()
         if active_project_path is None:
             return {
+                "active_project_path": "",
                 "project_context_warning": (
                     "No active project is configured. Do not invent repository-specific implementation details."
                 )
@@ -140,14 +178,68 @@ class GenerateAnswersWorkflow:
         success, reason, project_context, _ = self._project_context_workflow.run(active_project_path)
         if not success or project_context is None:
             return {
+                "active_project_path": active_project_path,
                 "project_context_warning": (
                     f"Project context is unavailable: {reason}. Do not invent repository-specific implementation details."
                 )
             }
-        return {"project_context": project_context}
+        return {"project_context": project_context, "active_project_path": active_project_path}
+
+    def _load_deep_project_context_node(self, state: AnswerState) -> dict[str, object]:
+        if not state.get("needs_deep_project_scan"):
+            return {"deep_project_contexts": {}}
+        active_project_path = state.get("active_project_path")
+        if not active_project_path:
+            return {"deep_project_contexts": {}}
+        topics = sorted(set(state.get("project_question_topics", {}).values()))
+        deep_contexts: dict[str, ProjectDeepContext] = {}
+        warning_messages: list[str] = []
+        for topic in topics:
+            success, reason, deep_context, _ = self._project_deep_scan_workflow.run(
+                project_path=active_project_path,
+                topic=topic,
+            )
+            if success and deep_context is not None:
+                deep_contexts[topic] = deep_context
+                continue
+            warning_messages.append(f"{topic}: {reason}")
+        warning_text = state.get("project_context_warning", "")
+        if warning_messages:
+            extra_warning = (
+                "Deep scan did not complete for all requested topics. "
+                "Answer conservatively using the available project context or general retrieval only. "
+                + "; ".join(warning_messages)
+            )
+            warning_text = f"{warning_text} {extra_warning}".strip()
+        return {
+            "deep_project_contexts": deep_contexts,
+            "project_context_warning": warning_text,
+        }
+
+    def _load_project_answer_memory_node(self, state: AnswerState) -> dict[str, object]:
+        active_project_path = state.get("active_project_path")
+        if not active_project_path:
+            return {"project_answer_memory": {}}
+        project_fingerprint = self._project_deep_scan_workflow.project_fingerprint(Path(active_project_path))
+        memory_by_topic: dict[str, list[ProjectAnswerMemoryRecord]] = {}
+        for topic in sorted(set(state.get("project_question_topics", {}).values())):
+            records = self._project_answer_memory_store.load_recent_records(
+                project_path=active_project_path,
+                project_fingerprint=project_fingerprint,
+                topic=topic,
+                limit=3,
+            )
+            if records:
+                memory_by_topic[topic] = records
+        return {"project_answer_memory": memory_by_topic}
 
     def _retrieve_node(self, state: AnswerState) -> dict[str, object]:
-        if not state.get("needs_general_retrieval", True):
+        should_force_general_retrieval = (
+            state.get("needs_project_context", False)
+            and state.get("project_context") is None
+            and not state.get("deep_project_contexts")
+        )
+        if not state.get("needs_general_retrieval", True) and not should_force_general_retrieval:
             return {"retrieved_context": {}}
         retrieval_mode = self._state_store.get_retrieval_mode(self._settings.retrieval_mode)
         retriever = QuestionRetriever(self._settings, self._vector_store, retrieval_mode=retrieval_mode)
@@ -195,7 +287,10 @@ class GenerateAnswersWorkflow:
                     "summary: {summary}\n"
                     "questions: {questions}\n"
                     "project_question_flags: {project_question_flags}\n"
+                    "project_question_topics: {project_question_topics}\n"
                     "project_context: {project_context}\n"
+                    "deep_project_contexts: {deep_project_contexts}\n"
+                    "project_answer_memory: {project_answer_memory}\n"
                     "project_context_warning: {project_context_warning}\n"
                     "retrieved_context: {retrieved_context}",
                 ),
@@ -212,7 +307,10 @@ class GenerateAnswersWorkflow:
                     questions=batch,
                     retrieved_context=retrieved_context,
                     project_question_flags=state.get("project_question_flags", {}),
+                    project_question_topics=state.get("project_question_topics", {}),
                     project_context=state.get("project_context"),
+                    deep_project_contexts=state.get("deep_project_contexts", {}),
+                    project_answer_memory=state.get("project_answer_memory", {}),
                     project_context_warning=state.get("project_context_warning", ""),
                 )
             )
@@ -306,10 +404,71 @@ class GenerateAnswersWorkflow:
         ]
         return any(marker in lowered for marker in project_markers)
 
+    def _detect_project_topic(self, question_text: str) -> str:
+        lowered = question_text.lower()
+        if any(marker in lowered for marker in ["memory", "记忆", "状态", "上下文"]):
+            return "memory"
+        if any(marker in lowered for marker in ["检索", "rag", "召回", "vector", "bm25", "hybrid"]):
+            return "retrieval"
+        if any(marker in lowered for marker in ["worker", "daemon", "后台", "轮询", "tmux"]):
+            return "worker"
+        if any(marker in lowered for marker in ["存储", "sqlite", "db", "数据库", "artifact"]):
+            return "storage"
+        if any(marker in lowered for marker in ["架构", "流程", "编排", "workflow", "graph", "agent"]):
+            return "architecture"
+        return "general"
+
+    def _needs_deep_project_scan(self, question: InterviewQuestion) -> bool:
+        lowered = question.question.lower()
+        detail_markers = [
+            "怎么做",
+            "为什么",
+            "具体",
+            "实现",
+            "链路",
+            "流程",
+            "模块",
+            "区别",
+            "tradeoff",
+            "how",
+            "why",
+            "detail",
+        ]
+        topic = self._detect_project_topic(question.question)
+        return topic != "general" or any(marker in lowered for marker in detail_markers)
+
     def _format_project_context(self, project_context: ProjectContext | None) -> str:
         if project_context is None:
             return ""
         return json.dumps(project_context.model_dump(mode="json"), ensure_ascii=False)
+
+    def _format_deep_project_contexts(
+        self,
+        deep_project_contexts: dict[str, ProjectDeepContext],
+    ) -> str:
+        if not deep_project_contexts:
+            return ""
+        return json.dumps(
+            {
+                topic: context.model_dump(mode="json")
+                for topic, context in deep_project_contexts.items()
+            },
+            ensure_ascii=False,
+        )
+
+    def _format_project_answer_memory(
+        self,
+        project_answer_memory: dict[str, list[ProjectAnswerMemoryRecord]],
+    ) -> str:
+        if not project_answer_memory:
+            return ""
+        return json.dumps(
+            {
+                topic: [record.model_dump(mode="json") for record in records]
+                for topic, records in project_answer_memory.items()
+            },
+            ensure_ascii=False,
+        )
 
     def _format_retrieved_context(
         self,
@@ -342,10 +501,22 @@ class GenerateAnswersWorkflow:
         questions: list[InterviewQuestion],
         retrieved_context: dict[str, list[IndexedQuestion]],
         project_question_flags: dict[str, bool],
+        project_question_topics: dict[str, str],
         project_context: ProjectContext | None,
+        deep_project_contexts: dict[str, ProjectDeepContext],
+        project_answer_memory: dict[str, list[ProjectAnswerMemoryRecord]],
         project_context_warning: str,
     ) -> list:
         try:
+            batch_has_project_questions = any(
+                project_question_flags.get(question.question, False) for question in questions
+            )
+            batch_question_topics = {
+                question.question: project_question_topics.get(question.question, "general")
+                for question in questions
+                if project_question_flags.get(question.question, False)
+            }
+            batch_topics = set(batch_question_topics.values())
             response = invoke_with_retry(
                 chain,
                 {
@@ -365,8 +536,25 @@ class GenerateAnswersWorkflow:
                         },
                         ensure_ascii=False,
                     ),
-                    "project_context": self._format_project_context(project_context),
-                    "project_context_warning": project_context_warning,
+                    "project_question_topics": json.dumps(batch_question_topics, ensure_ascii=False),
+                    "project_context": self._format_project_context(
+                        project_context if batch_has_project_questions else None
+                    ),
+                    "deep_project_contexts": self._format_deep_project_contexts(
+                        {
+                            topic: context
+                            for topic, context in deep_project_contexts.items()
+                            if topic in batch_topics
+                        }
+                    ),
+                    "project_answer_memory": self._format_project_answer_memory(
+                        {
+                            topic: records
+                            for topic, records in project_answer_memory.items()
+                            if topic in batch_topics
+                        }
+                    ),
+                    "project_context_warning": project_context_warning if batch_has_project_questions else "",
                     "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
                 },
             )
@@ -387,7 +575,10 @@ class GenerateAnswersWorkflow:
                         questions=[question],
                         retrieved_context=retrieved_context,
                         project_question_flags=project_question_flags,
+                        project_question_topics=project_question_topics,
                         project_context=project_context,
+                        deep_project_contexts=deep_project_contexts,
+                        project_answer_memory=project_answer_memory,
                         project_context_warning=project_context_warning,
                     )
                 )
@@ -497,7 +688,63 @@ class GenerateAnswersWorkflow:
             note_id=state["note_id"],
             markdown=self._build_markdown(answer_set),
         )
+        try:
+            self._persist_project_answer_memory(state=state, answer_set=answer_set)
+        except Exception as exc:
+            print(f"[project-answer-memory] note_id={state['note_id']} failed={exc}")
         return {"answer_path": str(answer_path), "markdown_path": str(markdown_path)}
+
+    def _persist_project_answer_memory(
+        self,
+        *,
+        state: AnswerState,
+        answer_set: GeneratedAnswerSet,
+    ) -> None:
+        active_project_path = state.get("active_project_path")
+        if not active_project_path:
+            return
+        project_context = state.get("project_context")
+        deep_project_contexts = state.get("deep_project_contexts", {})
+        project_question_flags = state.get("project_question_flags", {})
+        project_question_topics = state.get("project_question_topics", {})
+        fingerprint = self._project_deep_scan_workflow.project_fingerprint(
+            Path(active_project_path)
+        )
+        for answer in answer_set.answers:
+            if not project_question_flags.get(answer.question, False):
+                continue
+            topic = project_question_topics.get(answer.question, "general")
+            key_files: list[str] = []
+            if project_context is not None:
+                key_files.extend(project_context.key_files)
+            deep_context = deep_project_contexts.get(topic)
+            if deep_context is not None:
+                key_files.extend(deep_context.key_files)
+            self._project_answer_memory_store.append_record(
+                ProjectAnswerMemoryRecord(
+                    project_path=active_project_path,
+                    project_fingerprint=fingerprint,
+                    note_id=answer_set.note_id,
+                    question=answer.question,
+                    topic=topic,
+                    answer=answer.long_answer,
+                    used_project_context=project_context is not None,
+                    used_deep_scan=deep_context is not None,
+                    key_files=self._dedupe_key_files(key_files),
+                    created_at=datetime.now(UTC).isoformat(),
+                )
+            )
+
+    def _dedupe_key_files(self, key_files: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for key_file in key_files:
+            normalized = key_file.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     def _build_markdown(self, answer_set: GeneratedAnswerSet) -> str:
         lines = [

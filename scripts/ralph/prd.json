@@ -25,6 +25,7 @@
         "A workflow can scan the active project directory and produce a structured project context artifact",
         "The summary captures at least project overview, tech stack, memory-related implementation hints, retrieval-related implementation hints, orchestration flow, storage, and key files",
         "Project context artifacts are cached locally and can be refreshed on demand",
+        "Topic-specific deep scan artifacts can be cached separately from the lightweight project summary and reused when the repository fingerprint is unchanged",
         "Scanning avoids reading arbitrary system directories outside the configured project path",
         "Typecheck passes"
       ],
@@ -39,6 +40,7 @@
       "acceptanceCriteria": [
         "The answer workflow classifies whether a question needs project context, general retrieval, or both",
         "Project-related questions include cached project context in the answer-generation prompt",
+        "Project-related questions can trigger a topic-specific deep repository scan when more implementation detail is needed",
         "Non-project questions continue to use the existing retrieval flow without requiring an active project",
         "Mixed questions can use both project context and retrieved historical QA when both are relevant",
         "Typecheck passes"
@@ -68,12 +70,27 @@
       "description": "As the user, I want the new project-context commands and behavior documented so that I can reliably use project-aware answers in the CLI and Telegram worker.",
       "acceptanceCriteria": [
         "README documents the active project commands, cache refresh behavior, and when project context is injected into answers",
+        "README documents the deep scan cache and local project-answer memory behavior",
         "Documentation makes clear that the first implementation is backend-only and does not require a frontend",
         "Typecheck passes"
       ],
       "priority": 17,
       "passes": false,
       "notes": "Keep docs aligned with the exact commands shipped in this branch."
+    },
+    {
+      "id": "US-018",
+      "title": "Persist project specific answer memory",
+      "description": "As the user, I want project-specific answers to be recorded after generation so that future project questions can reuse prior project-aware reasoning and evidence.",
+      "acceptanceCriteria": [
+        "Project-specific generated answers are recorded with project path, fingerprint, topic, and key files",
+        "Recorded project-answer memory is stored locally and does not require a frontend or external service",
+        "Project-answer memory writing does not break non-project answer generation flows",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Keep the first version append-only and local-first."
     }
   ]
 }

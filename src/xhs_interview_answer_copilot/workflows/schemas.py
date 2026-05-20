@@ -120,3 +120,39 @@ class ProjectContext(BaseModel):
         default_factory=list,
         description="Repository-relative files that best support the summary.",
     )
+
+
+class ProjectDeepContext(BaseModel):
+    project_name: str = Field(description="Resolved active project name.")
+    project_path: str = Field(description="Absolute active project path.")
+    topic: str = Field(description="Topic that triggered the deep scan, such as retrieval or memory.")
+    fingerprint: str = Field(description="Project fingerprint used for cache invalidation.")
+    summary: str = Field(description="Topic-specific repository summary from the deep scan.")
+    key_findings: list[str] = Field(
+        default_factory=list,
+        description="Short findings the answer generator can reuse directly.",
+    )
+    key_files: list[str] = Field(
+        default_factory=list,
+        description="Repository-relative files most relevant to this topic.",
+    )
+    code_snippets: list[str] = Field(
+        default_factory=list,
+        description="Small code excerpts or references supporting the topic-specific summary.",
+    )
+
+
+class ProjectAnswerMemoryRecord(BaseModel):
+    project_path: str = Field(description="Absolute active project path used for the answer.")
+    project_fingerprint: str = Field(description="Project fingerprint captured when the answer was created.")
+    note_id: str = Field(description="Source note id that produced the answer.")
+    question: str = Field(description="Original project-specific question.")
+    topic: str = Field(description="Detected project topic for the question.")
+    answer: str = Field(description="Final detailed answer text.")
+    used_project_context: bool = Field(description="Whether cached project context was injected.")
+    used_deep_scan: bool = Field(description="Whether a deep repo scan result was injected.")
+    key_files: list[str] = Field(
+        default_factory=list,
+        description="Repository-relative files that supported the answer.",
+    )
+    created_at: str = Field(description="ISO timestamp when the answer memory record was stored.")
