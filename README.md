@@ -45,6 +45,8 @@ Bootstrap-stage environment variables:
 - `VISION_MODEL`
 - `EMBEDDING_MODEL`
 - `ANSWER_MODEL`
+- `PROJECT_SCAN_MODEL`
+- `PROJECT_SCAN_PROVIDER`
 - `RETRIEVAL_MODE`
 - `RETRIEVAL_TOP_K`
 - `RETRIEVAL_MIN_SCORE`
@@ -108,7 +110,7 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 
 Project-aware answering is backend-only in the first implementation and does not require a frontend. Use `xhs-copilot project use <path>` to set the active repository, `xhs-copilot project current` to inspect it, `xhs-copilot project refresh` to rebuild the cached structured summary under `OUTPUT_DIR/project-context/`, and `xhs-copilot project clear` to remove the current selection. Project-specific interview questions such as asking how the current project implements memory, retrieval, orchestration, or background workers will inject that cached project context into answer generation when the question explicitly refers to the current project.
 
-When a project question needs more implementation detail, the answer workflow now runs a deeper topic-specific repository scan for areas such as `retrieval`, `memory`, `worker`, `storage`, or `architecture`. Deep scan results are cached per project path, topic, and repository fingerprint under `OUTPUT_DIR/project-context/`, so similar future questions can reuse the deeper context without rescanning unchanged code. Project-specific final answers are also appended to a local `answer_memory.jsonl` file in the same cache directory for later reuse and inspection.
+When a project question needs more implementation detail, the answer workflow now runs a deeper topic-specific repository scan for areas such as `retrieval`, `memory`, `worker`, `storage`, or `architecture`. The runtime scan provider is controlled by `PROJECT_SCAN_PROVIDER`: `auto` tries the dedicated runtime subagent-style scanner first and falls back to the local scanner, `subagent` prefers the subagent path but still falls back locally on failure, and `local` disables the runtime subagent path. `PROJECT_SCAN_MODEL` controls which model powers the runtime scanner when the subagent path is used. Deep scan results are cached per project path, topic, repository fingerprint, provider, and optional question hash under `OUTPUT_DIR/project-context/`, so similar future questions can reuse the deeper context without rescanning unchanged code. Project-specific final answers are also appended to a local `answer_memory.jsonl` file in the same cache directory and are reused on later questions with the same project fingerprint.
 
 `xhs-copilot eval-retrieval <dataset.json>` runs a fixed retrieval benchmark across `vector`, `bm25`, and `hybrid` modes, scores each mode with Recall@K, MRR, Hit@1, keyword coverage, and average latency, and writes JSON/Markdown reports under `OUTPUT_DIR/evals/`.
 

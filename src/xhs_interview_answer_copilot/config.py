@@ -63,6 +63,8 @@ class Settings:
     vision_model: str
     embedding_model: str
     answer_model: str
+    project_scan_model: str
+    project_scan_provider: str
     retrieval_top_k: int
     retrieval_min_score: float
     retrieval_mode: str
@@ -95,6 +97,8 @@ def load_settings() -> Settings:
         vision_model=os.getenv("VISION_MODEL", os.getenv("NORMALIZE_MODEL", "gpt-4.1-mini")),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         answer_model=os.getenv("ANSWER_MODEL", "gpt-4.1-mini"),
+        project_scan_model=os.getenv("PROJECT_SCAN_MODEL", os.getenv("ANSWER_MODEL", "gpt-4.1-mini")),
+        project_scan_provider=_read_choice_env("PROJECT_SCAN_PROVIDER", "auto", {"auto", "subagent", "local"}),
         retrieval_top_k=_read_int_env("RETRIEVAL_TOP_K", 3),
         retrieval_min_score=_read_float_env("RETRIEVAL_MIN_SCORE", 0.25),
         retrieval_mode=_read_choice_env("RETRIEVAL_MODE", "vector", {"vector", "bm25", "hybrid"}),

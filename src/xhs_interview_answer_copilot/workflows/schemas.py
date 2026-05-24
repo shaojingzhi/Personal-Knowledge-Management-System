@@ -127,6 +127,8 @@ class ProjectDeepContext(BaseModel):
     project_path: str = Field(description="Absolute active project path.")
     topic: str = Field(description="Topic that triggered the deep scan, such as retrieval or memory.")
     fingerprint: str = Field(description="Project fingerprint used for cache invalidation.")
+    scan_provider: str = Field(description="Which runtime scanner produced this context, such as subagent or local.")
+    confidence: str = Field(description="Confidence label such as high, medium, or low.")
     summary: str = Field(description="Topic-specific repository summary from the deep scan.")
     key_findings: list[str] = Field(
         default_factory=list,
@@ -139,6 +141,10 @@ class ProjectDeepContext(BaseModel):
     code_snippets: list[str] = Field(
         default_factory=list,
         description="Small code excerpts or references supporting the topic-specific summary.",
+    )
+    followup_gaps: list[str] = Field(
+        default_factory=list,
+        description="Known gaps or caveats that the scanner could not fully verify.",
     )
 
 

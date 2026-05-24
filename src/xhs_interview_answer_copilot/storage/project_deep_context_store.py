@@ -24,8 +24,15 @@ class ProjectDeepContextStore:
         project_path: str,
         topic: str,
         fingerprint: str,
+        provider: str,
+        question_hash: str | None,
     ) -> ProjectDeepContext | None:
-        context_path = self._topic_cache_path(project_path=project_path, topic=topic)
+        context_path = self._topic_cache_path(
+            project_path=project_path,
+            topic=topic,
+            provider=provider,
+            question_hash=question_hash,
+        )
         if not context_path.exists():
             return None
         try:
@@ -34,8 +41,19 @@ class ProjectDeepContextStore:
             return None
         return context if context.fingerprint == fingerprint else None
 
-    def save_context(self, context: ProjectDeepContext) -> Path:
-        topic_path = self._topic_cache_path(project_path=context.project_path, topic=context.topic)
+    def save_context(
+        self,
+        context: ProjectDeepContext,
+        *,
+        provider: str,
+        question_hash: str | None,
+    ) -> Path:
+        topic_path = self._topic_cache_path(
+            project_path=context.project_path,
+            topic=context.topic,
+            provider=provider,
+            question_hash=question_hash,
+        )
         topic_path.parent.mkdir(parents=True, exist_ok=True)
         topic_path.write_text(
             json.dumps(context.model_dump(mode="json"), ensure_ascii=False, indent=2),
@@ -43,9 +61,29 @@ class ProjectDeepContextStore:
         )
         return topic_path
 
-    def context_path_for(self, *, project_path: str, topic: str) -> Path:
-        return self._topic_cache_path(project_path=project_path, topic=topic)
+    def context_path_for(
+        self,
+        *,
+        project_path: str,
+        topic: str,
+        provider: str,
+        question_hash: str | None,
+    ) -> Path:
+        return self._topic_cache_path(
+            project_path=project_path,
+            topic=topic,
+            provider=provider,
+            question_hash=question_hash,
+        )
 
-    def _topic_cache_path(self, *, project_path: str, topic: str) -> Path:
+    def _topic_cache_path(
+        self,
+        *,
+        project_path: str,
+        topic: str,
+        provider: str,
+        question_hash: str | None,
+    ) -> Path:
         safe_topic = topic.replace("/", "-").replace(" ", "-")
-        return self._project_cache_dir(project_path) / f"deep_{safe_topic}.json"
+        suffix = f"_{question_hash}" if question_hash else ""
+        return self._project_cache_dir(project_path) / f"deep_{provider}_{safe_topic}{suffix}.json"

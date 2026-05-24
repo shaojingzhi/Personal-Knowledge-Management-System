@@ -41,6 +41,7 @@
         "The answer workflow classifies whether a question needs project context, general retrieval, or both",
         "Project-related questions include cached project context in the answer-generation prompt",
         "Project-related questions can trigger a topic-specific deep repository scan when more implementation detail is needed",
+        "The runtime scan path can use a dedicated subagent-style scanner first and fall back to the local scanner when needed",
         "Non-project questions continue to use the existing retrieval flow without requiring an active project",
         "Mixed questions can use both project context and retrieved historical QA when both are relevant",
         "Typecheck passes"

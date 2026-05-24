@@ -30,6 +30,9 @@ from xhs_interview_answer_copilot.workflows.project_deep_scan_workflow import (
 from xhs_interview_answer_copilot.workflows.project_context_workflow import (
     ProjectContextWorkflow,
 )
+from xhs_interview_answer_copilot.workflows.project_subagent_scan_workflow import (
+    ProjectSubagentScanWorkflow,
+)
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
 from xhs_interview_answer_copilot.workflows.schemas import (
     GeneratedAnswerItem,
@@ -80,6 +83,11 @@ class GenerateAnswersWorkflow:
         self._project_deep_scan_workflow = ProjectDeepScanWorkflow(
             project_deep_context_store=ProjectDeepContextStore(output_dir=settings.output_dir)
         )
+        self._project_subagent_scan_workflow = ProjectSubagentScanWorkflow(
+            settings=settings,
+            project_deep_context_store=ProjectDeepContextStore(output_dir=settings.output_dir),
+            local_scan_workflow=self._project_deep_scan_workflow,
+        )
         self._project_context_workflow = ProjectContextWorkflow(
             project_context_store=ProjectContextStore(output_dir=settings.output_dir)
         )
@@ -118,15 +126,15 @@ class GenerateAnswersWorkflow:
             graph = StateGraph(AnswerState)
             graph.add_node("plan_context", self._plan_context_node)
             graph.add_node("load_project_context", self._load_project_context_node)
-            graph.add_node("load_deep_project_context", self._load_deep_project_context_node)
+            graph.add_node("maybe_delegate_project_scan", self._maybe_delegate_project_scan_node)
             graph.add_node("load_project_answer_memory", self._load_project_answer_memory_node)
             graph.add_node("retrieve", self._retrieve_node)
             graph.add_node("generate", self._generate_node)
             graph.add_node("save", self._save_node)
             graph.add_edge(START, "plan_context")
             graph.add_edge("plan_context", "load_project_context")
-            graph.add_edge("load_project_context", "load_deep_project_context")
-            graph.add_edge("load_deep_project_context", "load_project_answer_memory")
+            graph.add_edge("load_project_context", "maybe_delegate_project_scan")
+            graph.add_edge("maybe_delegate_project_scan", "load_project_answer_memory")
             graph.add_edge("load_project_answer_memory", "retrieve")
             graph.add_edge("retrieve", "generate")
             graph.add_edge("generate", "save")
@@ -185,7 +193,7 @@ class GenerateAnswersWorkflow:
             }
         return {"project_context": project_context, "active_project_path": active_project_path}
 
-    def _load_deep_project_context_node(self, state: AnswerState) -> dict[str, object]:
+    def _maybe_delegate_project_scan_node(self, state: AnswerState) -> dict[str, object]:
         if not state.get("needs_deep_project_scan"):
             return {"deep_project_contexts": {}}
         active_project_path = state.get("active_project_path")
@@ -195,9 +203,17 @@ class GenerateAnswersWorkflow:
         deep_contexts: dict[str, ProjectDeepContext] = {}
         warning_messages: list[str] = []
         for topic in topics:
-            success, reason, deep_context, _ = self._project_deep_scan_workflow.run(
-                project_path=active_project_path,
+            topic_questions = [
+                question_text
+                for question_text, question_topic in state.get("project_question_topics", {}).items()
+                if question_topic == topic
+            ]
+            joined_question = "\n".join(topic_questions)
+            success, reason, deep_context = self._scan_project_topic(
+                active_project_path=active_project_path,
                 topic=topic,
+                question=joined_question,
+                project_context=state.get("project_context"),
             )
             if success and deep_context is not None:
                 deep_contexts[topic] = deep_context
@@ -215,6 +231,43 @@ class GenerateAnswersWorkflow:
             "deep_project_contexts": deep_contexts,
             "project_context_warning": warning_text,
         }
+
+    def _scan_project_topic(
+        self,
+        *,
+        active_project_path: str,
+        topic: str,
+        question: str,
+        project_context: ProjectContext | None,
+    ) -> tuple[bool, str, ProjectDeepContext | None]:
+        provider = self._settings.project_scan_provider
+        if provider in {"auto", "subagent"}:
+            success, reason, deep_context, _ = self._project_subagent_scan_workflow.run(
+                project_path=active_project_path,
+                topic=topic,
+                question=question,
+                project_context=project_context,
+            )
+            if success:
+                return True, reason, deep_context
+            if provider == "subagent":
+                fallback_success, fallback_reason, fallback_context, _ = self._project_deep_scan_workflow.run(
+                    project_path=active_project_path,
+                    topic=topic,
+                    question=question,
+                    provider="local",
+                )
+                if fallback_success:
+                    return True, f"{reason}; fallback={fallback_reason}", fallback_context
+                return False, f"{reason}; fallback={fallback_reason}", None
+
+        success, reason, deep_context, _ = self._project_deep_scan_workflow.run(
+            project_path=active_project_path,
+            topic=topic,
+            question=question,
+            provider="local",
+        )
+        return success, reason, deep_context
 
     def _load_project_answer_memory_node(self, state: AnswerState) -> dict[str, object]:
         active_project_path = state.get("active_project_path")

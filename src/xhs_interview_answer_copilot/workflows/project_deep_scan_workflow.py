@@ -46,6 +46,11 @@ _SAFE_CONFIG_FILE_NAMES = {
     "prd.json",
 }
 
+_IGNORED_EVIDENCE_FILE_NAMES = {
+    "project_deep_scan_workflow.py",
+    "project_subagent_scan_workflow.py",
+}
+
 
 class ProjectDeepScanWorkflow:
     _MAX_FINGERPRINT_BYTES = 131072
@@ -59,6 +64,8 @@ class ProjectDeepScanWorkflow:
         *,
         project_path: str,
         topic: str,
+        question: str = "",
+        provider: str = "local",
         force_refresh: bool = False,
     ) -> tuple[bool, str, ProjectDeepContext | None, str | None]:
         root = Path(project_path).expanduser().resolve()
@@ -73,6 +80,8 @@ class ProjectDeepScanWorkflow:
                 project_path=str(root),
                 topic=normalized_topic,
                 fingerprint=fingerprint,
+                provider=provider,
+                question_hash=self._question_hash(question),
             )
             if cached is not None:
                 return (
@@ -83,15 +92,87 @@ class ProjectDeepScanWorkflow:
                         self._project_deep_context_store.context_path_for(
                             project_path=str(root),
                             topic=normalized_topic,
+                            provider=provider,
+                            question_hash=self._question_hash(question),
                         )
                     ),
                 )
         try:
-            context = self._build_context(root=root, topic=normalized_topic, fingerprint=fingerprint)
-            context_path = self._project_deep_context_store.save_context(context)
+            context = self.build_local_context(
+                root=root,
+                topic=normalized_topic,
+                fingerprint=fingerprint,
+            )
+            context_path = self._project_deep_context_store.save_context(
+                context,
+                provider=provider,
+                question_hash=self._question_hash(question),
+            )
         except Exception as exc:
             return False, f"Failed to deep scan project context: {exc}", None, None
         return True, "Deep project context refreshed.", context, str(context_path)
+
+    def build_local_context(
+        self,
+        *,
+        root: Path,
+        topic: str,
+        fingerprint: str,
+    ) -> ProjectDeepContext:
+        scored_files = self.score_files(root=root, topic=topic)
+        return self.build_context_from_candidates(
+            root=root,
+            topic=topic,
+            fingerprint=fingerprint,
+            scored_files=scored_files,
+            scan_provider="local",
+            confidence="medium",
+            followup_gaps=[],
+        )
+
+    def score_files(self, *, root: Path, topic: str) -> list[tuple[Path, int]]:
+        return self._score_files(root=root, topic=topic)
+
+    def extract_snippets(self, *, file_path: Path, root: Path, topic: str) -> list[str]:
+        return self._extract_snippets(file_path=file_path, root=root, topic=topic)
+
+    def build_context_from_candidates(
+        self,
+        *,
+        root: Path,
+        topic: str,
+        fingerprint: str,
+        scored_files: list[tuple[Path, int]],
+        scan_provider: str,
+        confidence: str,
+        followup_gaps: list[str],
+    ) -> ProjectDeepContext:
+        selected = scored_files[:6]
+        if not selected:
+            selected = [(root / "README.md", 1)] if (root / "README.md").exists() else []
+        snippets: list[str] = []
+        findings: list[str] = []
+        key_files: list[str] = []
+        for file_path, _ in selected:
+            relative_path = str(file_path.relative_to(root))
+            key_files.append(relative_path)
+            extracted = self._extract_snippets(file_path=file_path, root=root, topic=topic)
+            snippets.extend(extracted)
+            findings.append(self._build_file_finding(relative_path, topic))
+        summary = self._build_summary(project_name=root.name, topic=topic, key_files=key_files)
+        return ProjectDeepContext(
+            project_name=root.name,
+            project_path=str(root),
+            topic=topic,
+            fingerprint=fingerprint,
+            scan_provider=scan_provider,
+            confidence=confidence,
+            summary=summary,
+            key_findings=self._dedupe(findings)[:8],
+            key_files=key_files,
+            code_snippets=snippets[:8],
+            followup_gaps=followup_gaps,
+        )
 
     @staticmethod
     def normalize_topic(topic: str) -> str:
@@ -162,31 +243,11 @@ class ProjectDeepScanWorkflow:
             digest = hashlib.sha1(f"{project_root}:{latest_mtime}".encode("utf-8")).hexdigest()[:16]
             return f"mtime:{digest}"
 
-    def _build_context(self, *, root: Path, topic: str, fingerprint: str) -> ProjectDeepContext:
-        scored_files = self._score_files(root=root, topic=topic)
-        selected = scored_files[:6]
-        if not selected:
-            selected = [(root / "README.md", 1)] if (root / "README.md").exists() else []
-        snippets: list[str] = []
-        findings: list[str] = []
-        key_files: list[str] = []
-        for file_path, _ in selected:
-            relative_path = str(file_path.relative_to(root))
-            key_files.append(relative_path)
-            extracted = self._extract_snippets(file_path=file_path, root=root, topic=topic)
-            snippets.extend(extracted)
-            findings.append(self._build_file_finding(relative_path, topic))
-        summary = self._build_summary(project_name=root.name, topic=topic, key_files=key_files)
-        return ProjectDeepContext(
-            project_name=root.name,
-            project_path=str(root),
-            topic=topic,
-            fingerprint=fingerprint,
-            summary=summary,
-            key_findings=self._dedupe(findings)[:8],
-            key_files=key_files,
-            code_snippets=snippets[:8],
-        )
+    def _question_hash(self, question: str) -> str | None:
+        normalized = question.strip()
+        if not normalized:
+            return None
+        return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
 
     def _score_files(self, *, root: Path, topic: str) -> list[tuple[Path, int]]:
         keywords = _TOPIC_KEYWORDS.get(topic, _TOPIC_KEYWORDS["general"])
@@ -197,6 +258,8 @@ class ProjectDeepScanWorkflow:
             if candidate.is_symlink():
                 continue
             if not self._is_allowed_text_file(candidate):
+                continue
+            if candidate.name in _IGNORED_EVIDENCE_FILE_NAMES:
                 continue
             if self._looks_sensitive(candidate):
                 continue
