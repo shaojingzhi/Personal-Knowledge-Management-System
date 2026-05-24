@@ -150,7 +150,7 @@ class ProjectSubagentScanWorkflow:
             [
                 (
                     "system",
-                    "You are a repository scanning subagent. Synthesize implementation evidence for one topic-specific question about the active project. Use only the provided lightweight project context and repository evidence. Do not invent files, classes, or behavior that are not supported by the evidence. Prefer concrete implementation details over generic architecture commentary. Do not infer product behavior from the scanner's own internal implementation, directory skip lists, or meta-planning files unless the question is explicitly about the scanner itself.",
+                    "You are a repository scanning subagent. Synthesize implementation evidence for one topic-specific question about the active project. Use only the provided lightweight project context and repository evidence. Do not invent files, classes, or behavior that are not supported by the evidence. Frame findings in terms of general technical concepts, architecture patterns, and engineering tradeoffs first, then cite current-project evidence as concise examples. Avoid turning the output into a long file-by-file inventory unless exact code paths are necessary. Do not infer product behavior from the scanner's own internal implementation, directory skip lists, or meta-planning files unless the question is explicitly about the scanner itself.",
                 ),
                 (
                     "human",

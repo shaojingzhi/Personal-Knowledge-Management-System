@@ -327,7 +327,7 @@ class GenerateAnswersWorkflow:
             [
                 (
                     "system",
-                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage. If project context is provided for a question about the current project, prioritize the repository-specific implementation and design tradeoffs from that context. If project context is unavailable, say so briefly and answer at a general engineering level instead of inventing details. If a question is algorithmic, include a Python reference implementation in the code field. For non-algorithm questions, leave the code field empty.",
+                    "You generate interview answers from normalized questions. Use retrieved historical context only when it is relevant, and do not fabricate source usage. For questions about the current project, answer primarily from general technical principles, architecture patterns, and tradeoffs; use the current project only as a concise supporting example or proof point. Avoid over-indexing on file names, class names, or implementation trivia unless the user explicitly asks for exact code paths. If project context is unavailable, say so briefly and answer at a general engineering level instead of inventing details. If a question is algorithmic, include a Python reference implementation in the code field. For non-algorithm questions, leave the code field empty.",
                 ),
                 (
                     "human",
