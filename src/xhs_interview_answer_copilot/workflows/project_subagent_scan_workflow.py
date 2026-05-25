@@ -12,8 +12,13 @@ from xhs_interview_answer_copilot.storage.project_deep_context_store import (
     ProjectDeepContextStore,
 )
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
-from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
-from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry, is_budget_or_quota_error
+from xhs_interview_answer_copilot.workflows.openai_clients import (
+    build_chat_model,
+    build_fallback_chat_model,
+    fallback_available,
+    fallback_model_name,
+)
 from xhs_interview_answer_copilot.workflows.project_deep_scan_workflow import (
     ProjectDeepScanWorkflow,
 )
@@ -166,18 +171,26 @@ class ProjectSubagentScanWorkflow:
             ]
         )
         chain = prompt | llm
-        response = invoke_with_retry(
-            chain,
-            {
-                "format_instructions": parser.get_format_instructions(),
-                "project_name": project_name,
-                "project_path": project_path,
-                "topic": topic,
-                "question": question,
-                "project_context": "" if project_context is None else json.dumps(project_context.model_dump(mode="json"), ensure_ascii=False),
-                "repository_evidence": json.dumps(evidence_payload, ensure_ascii=False),
-            },
-        )
+        payload = {
+            "format_instructions": parser.get_format_instructions(),
+            "project_name": project_name,
+            "project_path": project_path,
+            "topic": topic,
+            "question": question,
+            "project_context": "" if project_context is None else json.dumps(project_context.model_dump(mode="json"), ensure_ascii=False),
+            "repository_evidence": json.dumps(evidence_payload, ensure_ascii=False),
+        }
+        try:
+            response = invoke_with_retry(chain, payload)
+        except Exception as exc:
+            if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                raise
+            fallback_llm = build_fallback_chat_model(
+                settings=self._settings,
+                model_name=fallback_model_name(self._settings, self._settings.project_scan_model),
+                temperature=0,
+            )
+            response = invoke_with_retry(prompt | fallback_llm, payload)
         return parse_pydantic_response(parser, response)
 
     def _question_hash(self, question: str) -> str | None:

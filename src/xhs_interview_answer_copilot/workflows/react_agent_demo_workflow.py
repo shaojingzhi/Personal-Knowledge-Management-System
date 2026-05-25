@@ -10,8 +10,13 @@ from xhs_interview_answer_copilot.config import Settings
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
-from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
-from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry, is_budget_or_quota_error
+from xhs_interview_answer_copilot.workflows.openai_clients import (
+    build_chat_model,
+    build_fallback_chat_model,
+    fallback_available,
+    fallback_model_name,
+)
 from xhs_interview_answer_copilot.workflows.retrieve_questions import QuestionRetriever
 
 
@@ -98,14 +103,22 @@ class ReactAgentDemoWorkflow:
             ]
         )
         try:
-            response = invoke_with_retry(
-                prompt | llm,
-                {
-                    "format_instructions": parser.get_format_instructions(),
-                    "question": state["question"],
-                    "steps_so_far": json.dumps(state.get("steps", []), ensure_ascii=False),
-                },
-            )
+            payload = {
+                "format_instructions": parser.get_format_instructions(),
+                "question": state["question"],
+                "steps_so_far": json.dumps(state.get("steps", []), ensure_ascii=False),
+            }
+            try:
+                response = invoke_with_retry(prompt | llm, payload)
+            except Exception as exc:
+                if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                    raise
+                fallback_llm = build_fallback_chat_model(
+                    settings=self._settings,
+                    model_name=fallback_model_name(self._settings, self._settings.answer_model),
+                    temperature=0,
+                )
+                response = invoke_with_retry(prompt | fallback_llm, payload)
             decision = parse_pydantic_response(parser, response)
         except Exception:
             decision = self._fallback_decision(state)
@@ -197,13 +210,21 @@ class ReactAgentDemoWorkflow:
                 ),
             ]
         )
-        response = invoke_with_retry(
-            prompt | llm,
-            {
-                "question": question,
-                "retrieved_knowledge": self._format_retrieved_context(context),
-            },
-        )
+        payload = {
+            "question": question,
+            "retrieved_knowledge": self._format_retrieved_context(context),
+        }
+        try:
+            response = invoke_with_retry(prompt | llm, payload)
+        except Exception as exc:
+            if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                raise
+            fallback_llm = build_fallback_chat_model(
+                settings=self._settings,
+                model_name=fallback_model_name(self._settings, self._settings.answer_model),
+                temperature=0,
+            )
+            response = invoke_with_retry(prompt | fallback_llm, payload)
         content = getattr(response, "content", response)
         return str(content).strip()
 

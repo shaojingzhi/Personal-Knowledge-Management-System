@@ -1,5 +1,5 @@
 {
-  "project": "XHS Interview Answer Copilot",
+  "project": "Knowledge Management Agent",
   "branchName": "ralph/project-context-routing",
   "description": "Add active project context selection and project-aware answer routing so technical interview questions about the current project can be answered using a cached repository summary instead of only generic retrieval.",
   "userStories": [

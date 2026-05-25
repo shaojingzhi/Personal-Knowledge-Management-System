@@ -9,10 +9,15 @@ from xhs_interview_answer_copilot.storage.normalized_artifact_store import (
     NormalizedArtifactStore,
 )
 from xhs_interview_answer_copilot.storage.raw_artifact_store import RawArtifactStore
-from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry, is_budget_or_quota_error
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
 from xhs_interview_answer_copilot.workflows.media_text_extractor import MediaTextExtractor
-from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.openai_clients import (
+    build_chat_model,
+    build_fallback_chat_model,
+    fallback_available,
+    fallback_model_name,
+)
 from xhs_interview_answer_copilot.workflows.schemas import (
     InterviewQuestion,
     NormalizedNote,
@@ -110,21 +115,29 @@ class NormalizeNoteWorkflow:
             preferred_output_language=preferred_output_language,
         )
         try:
-            response = invoke_with_retry(
-                chain,
-                {
-                    "format_instructions": parser.get_format_instructions(),
-                    "preferred_output_language": source_payload["preferred_output_language"],
-                    "source": source_payload["source"],
-                    "note_id": source_payload["note_id"],
-                    "note_url": source_payload["note_url"],
-                    "title": source_payload["title"],
-                    "body_text": source_payload["body_text"],
-                    "asset_texts": source_payload["asset_texts"],
-                    "image_urls": source_payload["image_urls"],
-                    "asset_paths": source_payload["asset_paths"],
-                },
-            )
+            payload = {
+                "format_instructions": parser.get_format_instructions(),
+                "preferred_output_language": source_payload["preferred_output_language"],
+                "source": source_payload["source"],
+                "note_id": source_payload["note_id"],
+                "note_url": source_payload["note_url"],
+                "title": source_payload["title"],
+                "body_text": source_payload["body_text"],
+                "asset_texts": source_payload["asset_texts"],
+                "image_urls": source_payload["image_urls"],
+                "asset_paths": source_payload["asset_paths"],
+            }
+            try:
+                response = invoke_with_retry(chain, payload)
+            except Exception as exc:
+                if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                    raise
+                fallback_llm = build_fallback_chat_model(
+                    settings=self._settings,
+                    model_name=fallback_model_name(self._settings, self._settings.normalize_model),
+                    temperature=0,
+                )
+                response = invoke_with_retry(prompt | fallback_llm, payload)
             try:
                 normalized_note = parse_pydantic_response(parser, response)
                 if self._should_force_localized_fallback(

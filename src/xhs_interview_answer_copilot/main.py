@@ -10,7 +10,8 @@ from pathlib import Path
 from xhs_interview_answer_copilot.config import settings
 
 
-DEFAULT_TELEGRAM_WORKER_SESSION = "xhs-copilot-telegram"
+DEFAULT_TELEGRAM_WORKER_SESSION = "knowledge-agent-telegram"
+LEGACY_TELEGRAM_WORKER_SESSION = "xhs-copilot-telegram"
 
 
 def _tmux_available() -> bool:
@@ -48,6 +49,18 @@ def _tmux_attach_command(session_name: str) -> str:
     return f"tmux attach -t {shlex.quote(session_name)}"
 
 
+def _effective_worker_session(session_name: str) -> str:
+    if not _tmux_available():
+        return session_name
+    if session_name != DEFAULT_TELEGRAM_WORKER_SESSION:
+        return session_name
+    if _tmux_session_exists(session_name):
+        return session_name
+    if _tmux_session_exists(LEGACY_TELEGRAM_WORKER_SESSION):
+        return LEGACY_TELEGRAM_WORKER_SESSION
+    return session_name
+
+
 def _start_telegram_worker_in_tmux(
     *,
     session_name: str,
@@ -57,7 +70,11 @@ def _start_telegram_worker_in_tmux(
     log_path = _telegram_daemon_log_path()
     if not _tmux_available():
         return False, "tmux is not installed or not found in PATH.", log_path
-    if _tmux_session_exists(session_name):
+    legacy_running = (
+        session_name == DEFAULT_TELEGRAM_WORKER_SESSION
+        and _tmux_session_exists(LEGACY_TELEGRAM_WORKER_SESSION)
+    )
+    if _tmux_session_exists(session_name) or legacy_running:
         return True, "Telegram worker is already running.", log_path
 
     command_parts = [
@@ -98,10 +115,17 @@ def _start_telegram_worker_in_tmux(
 def _stop_telegram_worker_in_tmux(session_name: str) -> tuple[bool, str]:
     if not _tmux_available():
         return False, "tmux is not installed or not found in PATH."
-    if not _tmux_session_exists(session_name):
+    target_session = session_name
+    if (
+        session_name == DEFAULT_TELEGRAM_WORKER_SESSION
+        and not _tmux_session_exists(target_session)
+        and _tmux_session_exists(LEGACY_TELEGRAM_WORKER_SESSION)
+    ):
+        target_session = LEGACY_TELEGRAM_WORKER_SESSION
+    if not _tmux_session_exists(target_session):
         return True, "Telegram worker is not running."
     result = subprocess.run(
-        ["tmux", "kill-session", "-t", session_name],
+        ["tmux", "kill-session", "-t", target_session],
         capture_output=True,
         text=True,
         check=False,
@@ -111,8 +135,8 @@ def _stop_telegram_worker_in_tmux(session_name: str) -> tuple[bool, str]:
     return True, "Telegram worker stopped."
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="xhs-copilot")
+def build_parser(prog_name: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog_name or Path(sys.argv[0]).name or "knowledge-agent")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("status", help="Show current bootstrap configuration")
@@ -132,18 +156,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     project_subparsers.add_parser("clear", help="Clear the current active project directory")
     subparsers.add_parser(
-        "login", help="Open a persistent Xiaohongshu browser profile for login"
+        "login", help="Open the configured browser profile for login"
     )
     subparsers.add_parser(
-        "healthcheck", help="Check whether the stored Xiaohongshu session is valid"
+        "healthcheck", help="Check whether the stored browser session is valid"
     )
     subparsers.add_parser(
         "discover", help="Scan the configured favorites page and store new note ids"
     )
     extract_parser = subparsers.add_parser(
-        "extract-note", help="Extract raw note content for a discovered note id"
+        "extract-note", help="Extract raw source content for a discovered note id"
     )
-    extract_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    extract_parser.add_argument("note_id", help="The discovered source note id")
     normalize_parser = subparsers.add_parser(
         "normalize-note", help="Run LangGraph normalization for one extracted note"
     )
@@ -151,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     index_parser = subparsers.add_parser(
         "index-note", help="Index normalized questions for one note into local vector storage"
     )
-    index_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    index_parser.add_argument("note_id", help="The discovered source note id")
     search_parser = subparsers.add_parser(
         "search-similar", help="Search similar indexed interview questions"
     )
@@ -175,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     answer_parser = subparsers.add_parser(
         "generate-answers", help="Generate RAG-based answers for one normalized note"
     )
-    answer_parser.add_argument("note_id", help="The discovered Xiaohongshu note id")
+    answer_parser.add_argument("note_id", help="The discovered source note id")
     answer_parser.add_argument(
         "--quick",
         action="store_true",
@@ -284,7 +308,7 @@ def main() -> None:
         retrieval_mode = state_store.get_retrieval_mode(settings.retrieval_mode)
         active_project_path = state_store.get_active_project_path() or "N/A"
         print(
-            "XHS Interview Answer Copilot initialized. "
+            "Knowledge Management Agent initialized. "
             f"Favorites folder: {settings.xhs_favorites_folder_name}; "
             f"profile dir: {settings.xhs_profile_dir}; "
             f"retrieval mode: {retrieval_mode}; "
@@ -685,20 +709,32 @@ def main() -> None:
             interval_seconds=args.interval_seconds,
             failure_backoff_seconds=args.failure_backoff_seconds,
         )
+        effective_session = _effective_worker_session(args.session_name)
         print(f"success={success}")
         print(f"reason={reason}")
-        print(f"session_name={args.session_name}")
+        print(f"session_name={effective_session}")
         print(f"log_path={log_path}")
-        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        print(f"attach_command={_tmux_attach_command(effective_session)}")
         return
 
     if args.command == "telegram-worker-status":
         log_path = _telegram_daemon_log_path_readonly()
-        running = _tmux_available() and _tmux_session_exists(args.session_name)
+        effective_session = _effective_worker_session(args.session_name)
+        legacy_running = (
+            _tmux_available()
+            and
+            args.session_name == DEFAULT_TELEGRAM_WORKER_SESSION
+            and _tmux_session_exists(LEGACY_TELEGRAM_WORKER_SESSION)
+        )
+        running = _tmux_available() and (
+            _tmux_session_exists(args.session_name)
+            or legacy_running
+        )
         print(f"running={running}")
-        print(f"session_name={args.session_name}")
+        print(f"session_name={effective_session}")
+        print(f"legacy_session_name={LEGACY_TELEGRAM_WORKER_SESSION}")
         print(f"log_path={log_path}")
-        print(f"attach_command={_tmux_attach_command(args.session_name)}")
+        print(f"attach_command={_tmux_attach_command(effective_session)}")
         return
 
     if args.command == "telegram-worker-stop":

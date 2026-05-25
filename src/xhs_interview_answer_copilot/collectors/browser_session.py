@@ -110,7 +110,7 @@ class BrowserSessionManager:
     def _bootstrap_message(self) -> str:
         if self._settings.xhs_browser_mode == "cdp":
             return "Connected to existing Chrome via CDP."
-        return f"Opened Xiaohongshu in persistent profile: {self._settings.xhs_profile_dir}"
+        return f"Opened the configured site in persistent profile: {self._settings.xhs_profile_dir}"
 
     def _wait_for_login(self, page: Any) -> AuthCheckResult:
         sync_api = import_module("playwright.sync_api")
@@ -167,7 +167,7 @@ class BrowserSessionManager:
         if any(indicator in body_text for indicator in RISK_CONTROL_TEXTS):
             return AuthCheckResult(
                 is_authenticated=False,
-                reason="Detected Xiaohongshu risk-control page.",
+                reason="Detected a site risk-control page.",
                 current_url=page.url,
             )
         if any(indicator in body_text for indicator in LOGIN_INDICATOR_TEXTS):

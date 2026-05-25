@@ -22,8 +22,13 @@ from xhs_interview_answer_copilot.storage.project_context_store import ProjectCo
 from xhs_interview_answer_copilot.storage.telegram_state_store import TelegramStateStore
 from xhs_interview_answer_copilot.storage.vector_store import IndexedQuestion, QuestionVectorStore
 from xhs_interview_answer_copilot.workflows.json_output_parser import parse_pydantic_response
-from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry
-from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.llm_retry import invoke_with_retry, is_budget_or_quota_error
+from xhs_interview_answer_copilot.workflows.openai_clients import (
+    build_chat_model,
+    build_fallback_chat_model,
+    fallback_available,
+    fallback_model_name,
+)
 from xhs_interview_answer_copilot.workflows.project_deep_scan_workflow import (
     ProjectDeepScanWorkflow,
 )
@@ -354,6 +359,7 @@ class GenerateAnswersWorkflow:
         for batch in self._iter_question_batches(normalized_note.questions):
             all_answers.extend(
                 self._generate_batch_answers(
+                    prompt=prompt,
                     chain=chain,
                     parser=parser,
                     normalized_note=normalized_note,
@@ -548,6 +554,7 @@ class GenerateAnswersWorkflow:
 
     def _generate_batch_answers(
         self,
+        prompt: Any,
         chain: Any,
         parser: Any,
         normalized_note: NormalizedNote,
@@ -570,47 +577,55 @@ class GenerateAnswersWorkflow:
                 if project_question_flags.get(question.question, False)
             }
             batch_topics = set(batch_question_topics.values())
-            response = invoke_with_retry(
-                chain,
-                {
-                    "format_instructions": parser.get_format_instructions(),
-                    "note_id": normalized_note.note_id,
-                    "note_url": normalized_note.note_url,
-                    "title": normalized_note.title,
-                    "summary": normalized_note.summary,
-                    "questions": json.dumps(
-                        [question.model_dump(mode="json") for question in questions],
-                        ensure_ascii=False,
-                    ),
-                    "project_question_flags": json.dumps(
-                        {
-                            question.question: project_question_flags.get(question.question, False)
-                            for question in questions
-                        },
-                        ensure_ascii=False,
-                    ),
-                    "project_question_topics": json.dumps(batch_question_topics, ensure_ascii=False),
-                    "project_context": self._format_project_context(
-                        project_context if batch_has_project_questions else None
-                    ),
-                    "deep_project_contexts": self._format_deep_project_contexts(
-                        {
-                            topic: context
-                            for topic, context in deep_project_contexts.items()
-                            if topic in batch_topics
-                        }
-                    ),
-                    "project_answer_memory": self._format_project_answer_memory(
-                        {
-                            topic: records
-                            for topic, records in project_answer_memory.items()
-                            if topic in batch_topics
-                        }
-                    ),
-                    "project_context_warning": project_context_warning if batch_has_project_questions else "",
-                    "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
-                },
-            )
+            payload = {
+                "format_instructions": parser.get_format_instructions(),
+                "note_id": normalized_note.note_id,
+                "note_url": normalized_note.note_url,
+                "title": normalized_note.title,
+                "summary": normalized_note.summary,
+                "questions": json.dumps(
+                    [question.model_dump(mode="json") for question in questions],
+                    ensure_ascii=False,
+                ),
+                "project_question_flags": json.dumps(
+                    {
+                        question.question: project_question_flags.get(question.question, False)
+                        for question in questions
+                    },
+                    ensure_ascii=False,
+                ),
+                "project_question_topics": json.dumps(batch_question_topics, ensure_ascii=False),
+                "project_context": self._format_project_context(
+                    project_context if batch_has_project_questions else None
+                ),
+                "deep_project_contexts": self._format_deep_project_contexts(
+                    {
+                        topic: context
+                        for topic, context in deep_project_contexts.items()
+                        if topic in batch_topics
+                    }
+                ),
+                "project_answer_memory": self._format_project_answer_memory(
+                    {
+                        topic: records
+                        for topic, records in project_answer_memory.items()
+                        if topic in batch_topics
+                    }
+                ),
+                "project_context_warning": project_context_warning if batch_has_project_questions else "",
+                "retrieved_context": self._format_retrieved_context(questions, retrieved_context),
+            }
+            try:
+                response = invoke_with_retry(chain, payload)
+            except Exception as exc:
+                if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                    raise
+                fallback_llm = build_fallback_chat_model(
+                    settings=self._settings,
+                    model_name=fallback_model_name(self._settings, self._settings.answer_model),
+                    temperature=0,
+                )
+                response = invoke_with_retry(prompt | fallback_llm, payload)
             partial_answer_set = parse_pydantic_response(parser, response)
             return self._validate_batch_answers(questions, partial_answer_set)
         except Exception as exc:
@@ -622,6 +637,7 @@ class GenerateAnswersWorkflow:
             for question in questions:
                 answers.extend(
                     self._generate_batch_answers(
+                        prompt=prompt,
                         chain=chain,
                         parser=parser,
                         normalized_note=normalized_note,

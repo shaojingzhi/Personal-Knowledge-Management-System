@@ -59,6 +59,11 @@ class Settings:
     openai_base_url: str | None
     openai_proxy_url: str | None
     openai_timeout_seconds: int
+    fallback_openai_api_key: str | None
+    fallback_openai_base_url: str | None
+    fallback_openai_proxy_url: str | None
+    fallback_openai_timeout_seconds: int
+    fallback_model: str | None
     normalize_model: str
     vision_model: str
     embedding_model: str
@@ -93,6 +98,11 @@ def load_settings() -> Settings:
         openai_base_url=_read_optional_env("OPENAI_BASE_URL"),
         openai_proxy_url=_read_optional_env("OPENAI_PROXY_URL"),
         openai_timeout_seconds=_read_int_env("OPENAI_TIMEOUT_SECONDS", 60),
+        fallback_openai_api_key=_read_optional_env("FALLBACK_OPENAI_API_KEY"),
+        fallback_openai_base_url=_read_optional_env("FALLBACK_OPENAI_BASE_URL"),
+        fallback_openai_proxy_url=_read_optional_env("FALLBACK_OPENAI_PROXY_URL"),
+        fallback_openai_timeout_seconds=_read_int_env("FALLBACK_OPENAI_TIMEOUT_SECONDS", 60),
+        fallback_model=_read_optional_env("FALLBACK_MODEL"),
         normalize_model=os.getenv("NORMALIZE_MODEL", "gpt-4.1-mini"),
         vision_model=os.getenv("VISION_MODEL", os.getenv("NORMALIZE_MODEL", "gpt-4.1-mini")),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),

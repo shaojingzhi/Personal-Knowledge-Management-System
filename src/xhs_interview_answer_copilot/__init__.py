@@ -1,1 +1,1 @@
-"""XHS Interview Answer Copilot package."""
+"""Knowledge Management Agent package."""

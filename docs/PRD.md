@@ -1,4 +1,4 @@
-# XHS Interview Answer Copilot PRD v3
+# Knowledge Management Agent PRD v3
 
 ## Overview
 

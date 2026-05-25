@@ -1,8 +1,8 @@
-# XHS Interview Answer Copilot
+# Knowledge Management Agent
 
 This is an implementation for demonstrating core AI Agent concepts: using an interview-answer assistant scenario to show RAG, workflow orchestration, multi-source perception, and asynchronous execution.
 
-The repository name remains `xhs-auto-generate-answer`, but the project should be read primarily as an AI Agent engineering demo. It uses Telegram and local artifacts as the user-facing shell, while the underlying design maps common agent concepts to concrete modules.
+The repository name remains `xhs-auto-generate-answer`, but the project should be read primarily as a general knowledge management agent demo. It uses chat input and local artifacts as the user-facing shell, while the underlying design maps common agent concepts to concrete modules.
 
 ## Core Agent Loop
 
@@ -82,32 +82,32 @@ Bootstrap-stage environment variables:
 
 After installing the package in editable mode, run:
 
-- `xhs-copilot status`
-- `xhs-copilot project use <path>`
-- `xhs-copilot project current`
-- `xhs-copilot project refresh`
-- `xhs-copilot project clear`
-- `xhs-copilot login`
-- `xhs-copilot healthcheck`
-- `xhs-copilot discover`
-- `xhs-copilot extract-note <note_id>`
-- `xhs-copilot normalize-note <note_id>`
-- `xhs-copilot index-note <note_id>`
-- `xhs-copilot search-similar <query>`
-- `xhs-copilot react-agent-demo <question>`
-- `xhs-copilot eval-retrieval <dataset.json>`
-- `xhs-copilot generate-answers <note_id>`
-- `xhs-copilot generate-answers <note_id> --quick`
-- `xhs-copilot backfill-full-answers <note_id>`
-- `xhs-copilot store-answer-records <note_id>`
-- `xhs-copilot reply-telegram <note_id>`
-- `xhs-copilot process-telegram-once`
-- `xhs-copilot process-telegram-daemon --interval-seconds 15`
-- `xhs-copilot telegram-worker-start`
-- `xhs-copilot telegram-worker-status`
-- `xhs-copilot telegram-worker-stop`
-- `xhs-copilot ingest-feishu-event <json_path>`
-- `xhs-copilot ingest-telegram-once`
+- `knowledge-agent status`
+- `knowledge-agent project use <path>`
+- `knowledge-agent project current`
+- `knowledge-agent project refresh`
+- `knowledge-agent project clear`
+- `knowledge-agent login`
+- `knowledge-agent healthcheck`
+- `knowledge-agent discover`
+- `knowledge-agent extract-note <note_id>`
+- `knowledge-agent normalize-note <note_id>`
+- `knowledge-agent index-note <note_id>`
+- `knowledge-agent search-similar <query>`
+- `knowledge-agent react-agent-demo <question>`
+- `knowledge-agent eval-retrieval <dataset.json>`
+- `knowledge-agent generate-answers <note_id>`
+- `knowledge-agent generate-answers <note_id> --quick`
+- `knowledge-agent backfill-full-answers <note_id>`
+- `knowledge-agent store-answer-records <note_id>`
+- `knowledge-agent reply-telegram <note_id>`
+- `knowledge-agent process-telegram-once`
+- `knowledge-agent process-telegram-daemon --interval-seconds 15`
+- `knowledge-agent telegram-worker-start`
+- `knowledge-agent telegram-worker-status`
+- `knowledge-agent telegram-worker-stop`
+- `knowledge-agent ingest-feishu-event <json_path>`
+- `knowledge-agent ingest-telegram-once`
 - or `python -m xhs_interview_answer_copilot.main status`
 
 ## Playwright setup
@@ -117,24 +117,24 @@ Install Python dependencies and browser binaries before using login commands:
 - `pip install -e .`
 - `playwright install chromium`
 
-`XHS_AUTHENTICATED_SELECTOR` is optional but strongly recommended. If you set it to a selector that is only visible after login, `xhs-copilot login` can wait for it during bootstrap and `xhs-copilot healthcheck` can verify the saved session more reliably. Without it, the login command falls back to manual confirmation and health checks return conservative results when they cannot prove the session is still authenticated.
+`XHS_AUTHENTICATED_SELECTOR` is optional but strongly recommended. If you set it to a selector that is only visible after login, `knowledge-agent login` can wait for it during bootstrap and `knowledge-agent healthcheck` can verify the saved session more reliably. Without it, the login command falls back to manual confirmation and health checks return conservative results when they cannot prove the session is still authenticated.
 
 For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with `--remote-debugging-port=9222`, keep your normal Xiaohongshu session logged in there, and set `XHS_CDP_URL=http://127.0.0.1:9222`.
 
 `XHS_FAVORITES_URL` should point to the exact favorites page you want to scan. `XHS_NOTE_LINK_SELECTOR` defaults to `a` for a minimal MVP and can be narrowed later if the page contains too many unrelated links.
 
-`xhs-copilot extract-note <note_id>` looks up the note URL from the local discovery database and writes a per-note `raw.json` under `OUTPUT_DIR`.
+`knowledge-agent extract-note <note_id>` looks up the note URL from the local discovery database and writes a per-note `raw.json` under `OUTPUT_DIR`.
 
-`xhs-copilot normalize-note <note_id>` is the first LangGraph-based step. It loads `raw.json` from either a web note bundle or a Telegram bundle, calls an LLM through LangChain structured output, and writes `normalized.json` under `OUTPUT_DIR`.
+`knowledge-agent normalize-note <note_id>` is the first LangGraph-based step. It loads `raw.json` from either a web note bundle or a Telegram bundle, calls an LLM through LangChain structured output, and writes `normalized.json` under `OUTPUT_DIR`.
 
-`xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs retrieval over those indexed questions using the current retrieval mode.
+`knowledge-agent index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `knowledge-agent search-similar <query>` runs retrieval over those indexed questions using the current retrieval mode.
 
 `RETRIEVAL_MODE` supports `vector`, `bm25`, and `hybrid`. `vector` uses embeddings, `bm25` uses local text scoring over the indexed question corpus, and `hybrid` merges both rankings. The active default mode can also be changed from Telegram by sending a message that is exactly `[vector]`, `[bm25]`, or `[hybrid]`.
 
-`xhs-copilot react-agent-demo <question>` is a minimal LangGraph ReAct loop for demonstrating Planning and Tool Use. Instead of following the fixed production DAG, the demo agent runs a small `decide -> tool -> decide -> final answer` loop and can choose between two tools: `search_knowledge` (the existing retrieval layer) and `answer_question` (LLM answer generation). A typical run looks like:
+`knowledge-agent react-agent-demo <question>` is a minimal LangGraph ReAct loop for demonstrating Planning and Tool Use. Instead of following the fixed production DAG, the demo agent runs a small `decide -> tool -> decide -> final answer` loop and can choose between two tools: `search_knowledge` (the existing retrieval layer) and `answer_question` (LLM answer generation). A typical run looks like:
 
 ```bash
-xhs-copilot react-agent-demo "当前项目的 RAG 检索为什么要支持 hybrid？"
+knowledge-agent react-agent-demo "当前项目的 RAG 检索为什么要支持 hybrid？"
 ```
 
 Example CLI output:
@@ -148,31 +148,31 @@ final_answer=Explain the general retrieval tradeoff first, then use this project
 
 This shows the interview-facing Agent capability: the LLM-backed loop can decide to search first and answer second, rather than only executing a hard-coded normalize → retrieve → generate pipeline. It is intentionally a small and safe ReAct demo, not a fully open-ended autonomous agent.
 
-Project-aware answering is backend-only in the first implementation and does not require a frontend. Use `xhs-copilot project use <path>` to set the active repository, `xhs-copilot project current` to inspect it, `xhs-copilot project refresh` to rebuild the cached structured summary under `OUTPUT_DIR/project-context/`, and `xhs-copilot project clear` to remove the current selection. Project-specific interview questions such as asking how the current project implements memory, retrieval, orchestration, or background workers will inject that cached project context into answer generation when the question explicitly refers to the current project.
+Project-aware answering is backend-only in the first implementation and does not require a frontend. Use `knowledge-agent project use <path>` to set the active repository, `knowledge-agent project current` to inspect it, `knowledge-agent project refresh` to rebuild the cached structured summary under `OUTPUT_DIR/project-context/`, and `knowledge-agent project clear` to remove the current selection. Project-specific interview questions such as asking how the current project implements memory, retrieval, orchestration, or background workers will inject that cached project context into answer generation when the question explicitly refers to the current project.
 
 When a project question needs more implementation detail, the answer workflow now runs a deeper topic-specific repository scan for areas such as `retrieval`, `memory`, `worker`, `storage`, or `architecture`. The runtime scan provider is controlled by `PROJECT_SCAN_PROVIDER`: `auto` tries the dedicated runtime subagent-style scanner first and falls back to the local scanner, `subagent` prefers the subagent path but still falls back locally on failure, and `local` disables the runtime subagent path. `PROJECT_SCAN_MODEL` controls which model powers the runtime scanner when the subagent path is used. Deep scan results are cached per project path, topic, repository fingerprint, provider, and optional question hash under `OUTPUT_DIR/project-context/`, so similar future questions can reuse the deeper context without rescanning unchanged code. Project-specific final answers are also appended to a local `answer_memory.jsonl` file in the same cache directory and are reused on later questions with the same project fingerprint.
 
-`xhs-copilot eval-retrieval <dataset.json>` runs a fixed retrieval benchmark across `vector`, `bm25`, and `hybrid` modes, scores each mode with Recall@K, MRR, Hit@1, keyword coverage, and average latency, and writes JSON/Markdown reports under `OUTPUT_DIR/evals/`.
+`knowledge-agent eval-retrieval <dataset.json>` runs a fixed retrieval benchmark across `vector`, `bm25`, and `hybrid` modes, scores each mode with Recall@K, MRR, Hit@1, keyword coverage, and average latency, and writes JSON/Markdown reports under `OUTPUT_DIR/evals/`.
 
-`xhs-copilot generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
+`knowledge-agent generate-answers <note_id>` is the first end-to-end RAG answer step. It loads `normalized.json`, retrieves similar indexed questions, and writes `answers.json` under `OUTPUT_DIR`.
 
-`xhs-copilot store-answer-records <note_id>` stores generated question-answer records in local vector storage so later retrieval and archival flows can reuse both questions and answers.
+`knowledge-agent store-answer-records <note_id>` stores generated question-answer records in local vector storage so later retrieval and archival flows can reuse both questions and answers.
 
-`xhs-copilot reply-telegram <note_id>` sends a concise text reply built from the generated answers back to the configured Telegram chat.
+`knowledge-agent reply-telegram <note_id>` sends a concise text reply built from the generated answers back to the configured Telegram chat.
 
-`xhs-copilot process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
+`knowledge-agent process-telegram-once` is the LangGraph-based one-shot orchestration command. It ingests Telegram once, then automatically runs normalization, question indexing, answer generation, Markdown archival, question-answer vector storage, and Telegram reply for each new bundle.
 
 Telegram orchestration now sends progress messages while it OCRs, normalizes, indexes, generates, stores, and replies, so large image notes do not look stuck. It sends a quick local answer first so image notes can be acknowledged quickly. A non-blocking `backfill-full-answers` process is started after the Telegram reply to regenerate full LLM answers, refresh stored answer records when possible, and send the completed `answer.md` file back to Telegram as a document.
 
 The Telegram worker also supports explicit control commands. Send `[project:/absolute/or/relative/path]` to switch the active project and rebuild its cached context, or `[project-refresh]` to refresh the cached summary for the current active project. These commands are handled conservatively like retrieval-mode switches and do not require a separate frontend.
 
-`xhs-copilot process-telegram-daemon` runs the same Telegram pipeline in a loop so the project can behave like a resident local worker. Use `--interval-seconds` to control the normal polling cadence, `--failure-backoff-seconds` to slow down after failures such as provider rate limits, and `--max-loops` for local testing.
+`knowledge-agent process-telegram-daemon` runs the same Telegram pipeline in a loop so the project can behave like a resident local worker. Use `--interval-seconds` to control the normal polling cadence, `--failure-backoff-seconds` to slow down after failures such as provider rate limits, and `--max-loops` for local testing.
 
-For a practical background worker, run `xhs-copilot telegram-worker-start`. It starts `process-telegram-daemon` inside a detached tmux session named `xhs-copilot-telegram`, appends logs to `telegram-daemon.log` next to `SQLITE_PATH` (default `data/telegram-daemon.log`), and avoids launching a duplicate worker if the session already exists. Use `xhs-copilot telegram-worker-status` to check whether it is running, `tmux attach -t xhs-copilot-telegram` to inspect it interactively, and `xhs-copilot telegram-worker-stop` to stop it.
+For a practical background worker, run `knowledge-agent telegram-worker-start`. It starts `process-telegram-daemon` inside a detached tmux session named `knowledge-agent-telegram`, appends logs to `telegram-daemon.log` next to `SQLITE_PATH` (default `data/telegram-daemon.log`), and avoids launching a duplicate worker if the session already exists. Use `knowledge-agent telegram-worker-status` to check whether it is running, `tmux attach -t knowledge-agent-telegram` to inspect it interactively, and `knowledge-agent telegram-worker-stop` to stop it.
 
-`xhs-copilot ingest-feishu-event <json_path>` ingests a Feishu event payload file, maps supported text-message events into the shared `SourceBundle` schema, and stores the resulting raw bundle locally.
+`knowledge-agent ingest-feishu-event <json_path>` ingests a Feishu event payload file, maps supported text-message events into the shared `SourceBundle` schema, and stores the resulting raw bundle locally.
 
-`xhs-copilot ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
+`knowledge-agent ingest-telegram-once` fetches Telegram updates once, downloads any attached photo or document from allowed chats, and writes a raw bundle under `OUTPUT_DIR/telegram_<update_id>/raw.json`.
 
 Raw ingestion now trends toward a shared `SourceBundle` shape with explicit `canonical_url`, `text_blocks`, `asset_paths`, and `image_urls`, so Telegram is the first message-driven source and later integrations such as Feishu can target the same normalization entry point.
 

@@ -28,3 +28,15 @@ def invoke_with_retry(
 def _is_retryable_rate_limit(exc: Exception) -> bool:
     message = str(exc).lower()
     return "429" in message or "rate limit" in message or "1302" in message
+
+
+def is_budget_or_quota_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "budget has been exceeded" in message
+        or "budget_exceeded" in message
+        or "quota" in message
+        or "insufficient_quota" in message
+        or "余额" in message
+        or "额度" in message
+    )

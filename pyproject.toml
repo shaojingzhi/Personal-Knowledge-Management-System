@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xhs-interview-answer-copilot"
+name = "knowledge-management-agent"
 version = "0.1.0"
-description = "Automates extraction and answer generation for favorited Xiaohongshu interview posts."
+description = "A general knowledge management agent demo for RAG, workflow orchestration, multi-source perception, and asynchronous execution."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,7 @@ dependencies = [
 ]
 
 [project.scripts]
+knowledge-agent = "xhs_interview_answer_copilot.main:main"
 xhs-copilot = "xhs_interview_answer_copilot.main:main"
 
 [project.optional-dependencies]

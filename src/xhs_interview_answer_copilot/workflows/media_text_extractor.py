@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from xhs_interview_answer_copilot.config import Settings
-from xhs_interview_answer_copilot.workflows.openai_clients import build_chat_model
+from xhs_interview_answer_copilot.workflows.llm_retry import is_budget_or_quota_error
+from xhs_interview_answer_copilot.workflows.openai_clients import (
+    build_chat_model,
+    build_fallback_chat_model,
+    fallback_available,
+    fallback_model_name,
+)
 
 
 def _looks_like_low_quality_ocr(text: str) -> bool:
@@ -98,7 +104,17 @@ class MediaTextExtractor:
                 },
             ]
         )
-        response = llm.invoke([message])
+        try:
+            response = llm.invoke([message])
+        except Exception as exc:
+            if not (fallback_available(self._settings) and is_budget_or_quota_error(exc)):
+                raise
+            fallback_llm = build_fallback_chat_model(
+                settings=self._settings,
+                model_name=fallback_model_name(self._settings, self._settings.vision_model),
+                temperature=0,
+            )
+            response = fallback_llm.invoke([message])
         content = getattr(response, "content", response)
         text = self._coerce_text(content)
         if text and not _looks_like_invalid_model_ocr(text):

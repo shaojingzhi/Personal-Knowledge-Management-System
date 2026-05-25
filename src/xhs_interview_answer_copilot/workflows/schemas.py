@@ -15,8 +15,8 @@ class InterviewQuestion(BaseModel):
 
 
 class NormalizedNote(BaseModel):
-    note_id: str = Field(description="Original Xiaohongshu note id.")
-    note_url: str = Field(description="Original Xiaohongshu note url.")
+    note_id: str = Field(description="Original source note id.")
+    note_url: str = Field(description="Original source note url.")
     title: str = Field(description="Normalized note title if available.")
     summary: str = Field(description="One short summary of the interview post.")
     tags: list[str] = Field(default_factory=list, description="Compact tags for the post.")
@@ -86,8 +86,8 @@ class GeneratedAnswerItem(BaseModel):
 
 
 class GeneratedAnswerSet(BaseModel):
-    note_id: str = Field(description="Original Xiaohongshu note id.")
-    note_url: str = Field(description="Original Xiaohongshu note url.")
+    note_id: str = Field(description="Original source note id.")
+    note_url: str = Field(description="Original source note url.")
     title: str = Field(description="Normalized note title.")
     answers: list[GeneratedAnswerItem] = Field(
         default_factory=list,
