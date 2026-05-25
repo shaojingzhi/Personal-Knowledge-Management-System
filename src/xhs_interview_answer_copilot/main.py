@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -155,6 +156,11 @@ def build_parser() -> argparse.ArgumentParser:
         "search-similar", help="Search similar indexed interview questions"
     )
     search_parser.add_argument("query", help="Free-text query for similarity retrieval")
+    react_parser = subparsers.add_parser(
+        "react-agent-demo",
+        help="Run a minimal LangGraph ReAct loop over search_knowledge and answer_question tools",
+    )
+    react_parser.add_argument("question", help="Question for the ReAct demo agent")
     eval_parser = subparsers.add_parser(
         "eval-retrieval",
         help="Evaluate vector, bm25, and hybrid retrieval modes on a fixed dataset",
@@ -489,6 +495,25 @@ def main() -> None:
         print(f"report_json_path={result.report_json_path}")
         print(f"report_markdown_path={result.report_markdown_path}")
         if not result.success:
+            raise SystemExit(1)
+        return
+
+    if args.command == "react-agent-demo":
+        from xhs_interview_answer_copilot.storage.vector_store import QuestionVectorStore
+        from xhs_interview_answer_copilot.workflows.react_agent_demo_workflow import (
+            ReactAgentDemoWorkflow,
+        )
+
+        workflow = ReactAgentDemoWorkflow(
+            settings=settings,
+            vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+        )
+        success, reason, final_answer, steps = workflow.run(args.question)
+        print(f"success={success}")
+        print(f"reason={reason}")
+        print(f"steps_json={json.dumps(steps, ensure_ascii=False)}")
+        print(f"final_answer={final_answer}")
+        if not success:
             raise SystemExit(1)
         return
 

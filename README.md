@@ -1,6 +1,28 @@
 # XHS Interview Answer Copilot
 
-Personal automation for turning newly favorited Xiaohongshu interview posts into structured questions and AI-generated answers.
+This is an implementation for demonstrating core AI Agent concepts: using an interview-answer assistant scenario to show RAG, workflow orchestration, multi-source perception, and asynchronous execution.
+
+The repository name remains `xhs-auto-generate-answer`, but the project should be read primarily as an AI Agent engineering demo. It uses Telegram and local artifacts as the user-facing shell, while the underlying design maps common agent concepts to concrete modules.
+
+## Core Agent Loop
+
+```mermaid
+flowchart LR
+    P[Perception<br/>Telegram / Feishu / OCR / SourceBundle] --> M[Memory<br/>SQLite state / vector store / artifacts / project context]
+    M --> PL[Planning<br/>LangGraph workflows / routing / retrieval mode / project scan decision]
+    PL --> A[Action<br/>answer generation / Telegram reply / Markdown document / background backfill]
+    A --> P
+
+    P1[collectors/telegram_ingestor.py<br/>collectors/feishu_ingestor.py<br/>workflows/media_text_extractor.py] -.-> P
+    M1[storage/telegram_state_store.py<br/>storage/vector_store.py<br/>storage/*artifact_store.py<br/>storage/project_*_store.py] -.-> M
+    PL1[workflows/process_telegram_once_workflow.py<br/>workflows/normalize_note_workflow.py<br/>workflows/generate_answers_workflow.py<br/>workflows/project_subagent_scan_workflow.py] -.-> PL
+    A1[dispatch/telegram_dispatcher.py<br/>workflows/store_answer_records_workflow.py<br/>backfill-full-answers] -.-> A
+```
+
+- **Perception**: Ingests user-provided interview content from Telegram or Feishu, extracts text from screenshots, and normalizes all sources into `SourceBundle`.
+- **Memory**: Persists bot state, normalized artifacts, generated answers, vector records, project context, deep scan caches, and project-specific answer memory.
+- **Planning**: Uses LangGraph workflows to decide how to normalize, retrieve, route project-specific questions, invoke runtime project scanning, and choose answer strategy.
+- **Action**: Generates interview-ready answers, replies to Telegram quickly, stores reusable records, and runs slower full-answer backfill asynchronously.
 
 ## Planned stack
 
@@ -72,6 +94,7 @@ After installing the package in editable mode, run:
 - `xhs-copilot normalize-note <note_id>`
 - `xhs-copilot index-note <note_id>`
 - `xhs-copilot search-similar <query>`
+- `xhs-copilot react-agent-demo <question>`
 - `xhs-copilot eval-retrieval <dataset.json>`
 - `xhs-copilot generate-answers <note_id>`
 - `xhs-copilot generate-answers <note_id> --quick`
@@ -107,6 +130,23 @@ For a lower-risk setup, set `XHS_BROWSER_MODE=cdp`, launch your own Chrome with 
 `xhs-copilot index-note <note_id>` embeds the normalized questions and stores them in a local SQLite-backed vector table. `xhs-copilot search-similar <query>` runs retrieval over those indexed questions using the current retrieval mode.
 
 `RETRIEVAL_MODE` supports `vector`, `bm25`, and `hybrid`. `vector` uses embeddings, `bm25` uses local text scoring over the indexed question corpus, and `hybrid` merges both rankings. The active default mode can also be changed from Telegram by sending a message that is exactly `[vector]`, `[bm25]`, or `[hybrid]`.
+
+`xhs-copilot react-agent-demo <question>` is a minimal LangGraph ReAct loop for demonstrating Planning and Tool Use. Instead of following the fixed production DAG, the demo agent runs a small `decide -> tool -> decide -> final answer` loop and can choose between two tools: `search_knowledge` (the existing retrieval layer) and `answer_question` (LLM answer generation). A typical run looks like:
+
+```bash
+xhs-copilot react-agent-demo "当前项目的 RAG 检索为什么要支持 hybrid？"
+```
+
+Example CLI output:
+
+```text
+success=True
+reason=ReAct agent demo completed.
+steps_json=[{"thought":"Need supporting knowledge before answering.","action":"search_knowledge","action_input":"当前项目的 RAG 检索为什么要支持 hybrid？"},{"tool":"search_knowledge","input":"当前项目的 RAG 检索为什么要支持 hybrid？","observation":"..."},{"thought":"Knowledge has been gathered; answer the question now.","action":"answer_question","action_input":"当前项目的 RAG 检索为什么要支持 hybrid？"},{"tool":"answer_question","input":"当前项目的 RAG 检索为什么要支持 hybrid？","observation":"..."}]
+final_answer=Explain the general retrieval tradeoff first, then use this project as a concise example.
+```
+
+This shows the interview-facing Agent capability: the LLM-backed loop can decide to search first and answer second, rather than only executing a hard-coded normalize → retrieve → generate pipeline. It is intentionally a small and safe ReAct demo, not a fully open-ended autonomous agent.
 
 Project-aware answering is backend-only in the first implementation and does not require a frontend. Use `xhs-copilot project use <path>` to set the active repository, `xhs-copilot project current` to inspect it, `xhs-copilot project refresh` to rebuild the cached structured summary under `OUTPUT_DIR/project-context/`, and `xhs-copilot project clear` to remove the current selection. Project-specific interview questions such as asking how the current project implements memory, retrieval, orchestration, or background workers will inject that cached project context into answer generation when the question explicitly refers to the current project.
 
