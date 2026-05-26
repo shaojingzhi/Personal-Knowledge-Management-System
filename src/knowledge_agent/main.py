@@ -537,6 +537,7 @@ def main() -> None:
         from knowledge_agent.workflows.project_subagent_scan_workflow import (
             ProjectSubagentScanWorkflow,
         )
+        from knowledge_agent.workflows.observability import render_cli_timeline
         from knowledge_agent.workflows.react_agent_demo_workflow import (
             ReactAgentDemoWorkflow,
         )
@@ -555,10 +556,13 @@ def main() -> None:
                 local_scan_workflow=ProjectDeepScanWorkflow(project_deep_context_store),
             ),
         )
-        success, reason, final_answer, steps = workflow.run(args.question)
+        success, reason, final_answer, steps, trace, trace_path = workflow.run(args.question)
         print(f"success={success}")
         print(f"reason={reason}")
         print(f"steps_json={json.dumps(steps, ensure_ascii=False)}")
+        print(f"trace_path={trace_path}")
+        if trace is not None:
+            print(render_cli_timeline(trace))
         print(f"final_answer={final_answer}")
         if not success:
             raise SystemExit(1)

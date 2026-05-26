@@ -17,6 +17,12 @@ from knowledge_agent.workflows.openai_clients import (
     fallback_available,
     fallback_model_name,
 )
+from knowledge_agent.workflows.observability import (
+    AgentTrace,
+    TraceRecorder,
+    observable_step,
+    _safe_text,
+)
 from knowledge_agent.workflows.project_context_workflow import ProjectContextWorkflow
 from knowledge_agent.workflows.project_deep_scan_workflow import ProjectDeepScanWorkflow
 from knowledge_agent.workflows.project_subagent_scan_workflow import ProjectSubagentScanWorkflow
@@ -44,6 +50,8 @@ class ReactAgentState(TypedDict):
     project_context: NotRequired[ProjectContext]
     deep_project_context: NotRequired[ProjectDeepContext]
     final_answer: NotRequired[str]
+    trace_id: NotRequired[str]
+    trace_path: NotRequired[str]
 
 
 _PROJECT_TOPICS = ("memory", "retrieval", "worker", "storage", "architecture", "general")
@@ -64,10 +72,13 @@ class ReactAgentDemoWorkflow:
         self._project_context_workflow = project_context_workflow
         self._project_deep_scan_workflow = project_deep_scan_workflow
         self._project_subagent_scan_workflow = project_subagent_scan_workflow
+        self._trace_recorder = TraceRecorder(output_dir=settings.output_dir)
+        self._active_trace: AgentTrace | None = None
 
-    def run(self, question: str) -> tuple[bool, str, str, list[dict[str, str]]]:
+    def run(self, question: str) -> tuple[bool, str, str, list[dict[str, str]], AgentTrace | None, str | None]:
         if self._settings.openai_api_key is None and self._settings.openai_base_url is None:
-            return False, "Configure OPENAI_API_KEY or OPENAI_BASE_URL first.", "", []
+            return False, "Configure OPENAI_API_KEY or OPENAI_BASE_URL first.", "", [], None, None
+        self._active_trace = AgentTrace.start("react-agent-demo", question)
         try:
             graph_module = import_module("langgraph.graph")
             END = graph_module.END
@@ -96,11 +107,40 @@ class ReactAgentDemoWorkflow:
             graph.add_edge("scan_project_source", "decide")
             graph.add_edge("answer_question", END)
             app = graph.compile()
-            result = app.invoke({"question": question, "steps": []})
+            result = app.invoke({"question": question, "steps": [], "trace_id": self._active_trace.trace_id})
         except Exception as exc:
-            return False, f"ReAct agent demo failed: {exc}", "", []
-        return True, "ReAct agent demo completed.", result.get("final_answer", ""), result.get("steps", [])
+            if self._active_trace is not None:
+                self._active_trace.finish(
+                    status="error",
+                    final_summary=_safe_text(f"ReAct agent demo failed: {exc}", limit=200),
+                )
+                trace_path = self._save_trace_best_effort(self._active_trace)
+                failed_trace = self._active_trace
+                self._active_trace = None
+                return False, f"ReAct agent demo failed: {exc}", "", [], failed_trace, trace_path
+            return False, f"ReAct agent demo failed: {exc}", "", [], None, None
+        final_answer = result.get("final_answer", "")
+        if self._active_trace is not None:
+            self._active_trace.finish(status="ok", final_summary="ReAct agent demo completed.")
+            trace_path = self._save_trace_best_effort(self._active_trace)
+            completed_trace = self._active_trace
+            self._active_trace = None
+            return True, "ReAct agent demo completed.", final_answer, result.get("steps", []), completed_trace, trace_path
+        return True, "ReAct agent demo completed.", final_answer, result.get("steps", []), None, None
 
+    def _save_trace_best_effort(self, trace: AgentTrace) -> str | None:
+        try:
+            return str(self._trace_recorder.save(trace))
+        except Exception as exc:
+            print(f"[observability] failed to save trace: {exc}")
+            return None
+
+    @observable_step(
+        "decide",
+        summarize_input=lambda self, state: state["question"],
+        summarize_output=lambda result: json.dumps(result.get("steps", [])[-1], ensure_ascii=False),
+        build_summary=lambda result: f"selected {result.get('steps', [])[-1]['action']}",
+    )
     def _decide_node(self, state: ReactAgentState) -> dict[str, object]:
         decision = self._llm_decide(state)
         steps = [*state.get("steps", []), decision.model_dump(mode="json")]
@@ -198,6 +238,12 @@ class ReactAgentDemoWorkflow:
         last_step = state["steps"][-1]
         return last_step["action"]
 
+    @observable_step(
+        "search_knowledge",
+        summarize_input=lambda self, state: state["steps"][-1]["action_input"],
+        summarize_output=lambda result: result["steps"][-1]["observation"],
+        build_summary=lambda result: "retrieved external knowledge",
+    )
     def _search_knowledge_node(self, state: ReactAgentState) -> dict[str, object]:
         query = state["steps"][-1]["action_input"]
         retrieval_mode = self._state_store.get_retrieval_mode(self._settings.retrieval_mode)
@@ -223,6 +269,12 @@ class ReactAgentDemoWorkflow:
             ],
         }
 
+    @observable_step(
+        "read_project_context",
+        summarize_input=lambda self, state: state["question"],
+        summarize_output=lambda result: result["steps"][-1]["observation"],
+        build_summary=lambda result: "refreshed active project context",
+    )
     def _read_project_context_node(self, state: ReactAgentState) -> dict[str, object]:
         active_project_path = self._state_store.get_active_project_path()
         if not active_project_path:
@@ -266,6 +318,12 @@ class ReactAgentDemoWorkflow:
             payload["project_context"] = project_context
         return payload
 
+    @observable_step(
+        "scan_project_source",
+        summarize_input=lambda self, state: state["steps"][-1]["action_input"],
+        summarize_output=lambda result: result["steps"][-1]["observation"],
+        build_summary=lambda result: "scanned project source for topic evidence",
+    )
     def _scan_project_source_node(self, state: ReactAgentState) -> dict[str, object]:
         active_project_path = self._state_store.get_active_project_path()
         topic = self._normalize_scan_topic(state["steps"][-1]["action_input"])
@@ -314,6 +372,12 @@ class ReactAgentDemoWorkflow:
             payload["deep_project_context"] = deep_context
         return payload
 
+    @observable_step(
+        "answer_question",
+        summarize_input=lambda self, state: state["steps"][-1]["action_input"],
+        summarize_output=lambda result: result["steps"][-1]["observation"],
+        build_summary=lambda result: "generated final interview answer",
+    )
     def _answer_question_node(self, state: ReactAgentState) -> dict[str, object]:
         question = state["steps"][-1]["action_input"]
         answer = self._answer_question(
