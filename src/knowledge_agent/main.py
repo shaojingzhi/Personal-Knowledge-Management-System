@@ -182,7 +182,7 @@ def build_parser(prog_name: str | None = None) -> argparse.ArgumentParser:
     search_parser.add_argument("query", help="Free-text query for similarity retrieval")
     react_parser = subparsers.add_parser(
         "react-agent-demo",
-        help="Run a minimal LangGraph ReAct loop over search_knowledge and answer_question tools",
+        help="Run a minimal LangGraph ReAct loop over knowledge search, project context, source scan, and answer tools",
     )
     react_parser.add_argument("question", help="Question for the ReAct demo agent")
     eval_parser = subparsers.add_parser(
@@ -523,14 +523,37 @@ def main() -> None:
         return
 
     if args.command == "react-agent-demo":
+        from knowledge_agent.storage.project_context_store import ProjectContextStore
+        from knowledge_agent.storage.project_deep_context_store import (
+            ProjectDeepContextStore,
+        )
         from knowledge_agent.storage.vector_store import QuestionVectorStore
+        from knowledge_agent.workflows.project_context_workflow import (
+            ProjectContextWorkflow,
+        )
+        from knowledge_agent.workflows.project_deep_scan_workflow import (
+            ProjectDeepScanWorkflow,
+        )
+        from knowledge_agent.workflows.project_subagent_scan_workflow import (
+            ProjectSubagentScanWorkflow,
+        )
         from knowledge_agent.workflows.react_agent_demo_workflow import (
             ReactAgentDemoWorkflow,
         )
 
+        project_deep_context_store = ProjectDeepContextStore(output_dir=settings.output_dir)
         workflow = ReactAgentDemoWorkflow(
             settings=settings,
             vector_store=QuestionVectorStore(sqlite_path=settings.sqlite_path),
+            project_context_workflow=ProjectContextWorkflow(
+                ProjectContextStore(output_dir=settings.output_dir)
+            ),
+            project_deep_scan_workflow=ProjectDeepScanWorkflow(project_deep_context_store),
+            project_subagent_scan_workflow=ProjectSubagentScanWorkflow(
+                settings=settings,
+                project_deep_context_store=project_deep_context_store,
+                local_scan_workflow=ProjectDeepScanWorkflow(project_deep_context_store),
+            ),
         )
         success, reason, final_answer, steps = workflow.run(args.question)
         print(f"success={success}")
