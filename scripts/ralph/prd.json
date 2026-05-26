@@ -1,52 +1,97 @@
 {
-  "project": "XHS Interview Answer Copilot",
-  "branchName": "ralph/xhs-ocr-grouping-feishu-next",
-  "description": "Implement the next-stage optional features for the Telegram-first interview copilot: OCR or multimodal extraction for image-first bundles, safer Telegram message grouping for split inputs, and a Feishu adapter that reuses the SourceBundle-based pipeline.",
+  "project": "Knowledge Management Agent",
+  "branchName": "ralph/project-context-routing",
+  "description": "Add active project context selection and project-aware answer routing so technical interview questions about the current project can be answered using a cached repository summary instead of only generic retrieval.",
   "userStories": [
     {
-      "id": "US-010",
-      "title": "Add OCR or multimodal media extraction",
-      "description": "As the user, I want screenshot-heavy bundles to be readable so that image-first interview posts can also enter the same pipeline.",
+      "id": "US-013",
+      "title": "Add active project path state and CLI controls",
+      "description": "As the user, I want to set and inspect the active project directory so that project-specific interview answers can target the repository I care about right now.",
       "acceptanceCriteria": [
-        "Downloaded Telegram assets can be converted into text with OCR or multimodal models",
-        "Media-derived text is merged into the same SourceBundle-driven normalization path before question extraction",
-        "OCR or multimodal extraction can process at least one local image file without requiring a reachable Xiaohongshu web page",
-        "Media extraction failures are surfaced clearly without corrupting the original raw bundle",
+        "The bot state store persists an active project path independently from retrieval mode and Telegram offset state",
+        "CLI commands let the user set the active project path and inspect the current active project selection",
+        "Invalid or non-directory paths fail clearly without corrupting existing state",
         "Typecheck passes"
       ],
-      "priority": 10,
+      "priority": 13,
       "passes": false,
-      "notes": "Implement the smallest stable path first: local image file -> extracted text -> normalize. Prefer compatibility with the existing OpenAI-compatible stack and LangChain message format."
+      "notes": "Keep the first version local-first and CLI-driven. No frontend is required."
     },
     {
-      "id": "US-011",
-      "title": "Add safer Telegram message grouping",
-      "description": "As the user, I want related Telegram messages sent close together to be grouped into one logical bundle so that links and follow-up text are processed together without merging unrelated messages.",
+      "id": "US-014",
+      "title": "Build cached project context summaries",
+      "description": "As the user, I want the system to summarize the active project into structured facts so that answers can reference the real repository without rescanning everything on every question.",
       "acceptanceCriteria": [
-        "Grouping only merges messages from the same chat under explicit, conservative rules",
-        "The grouping strategy supports the common case of link preview followed by explanatory text without over-grouping unrelated messages",
-        "Grouped bundles remain replayable and traceable to original message ids and retain a safe reply target",
-        "Grouping failures do not break the one-shot orchestration path",
+        "A workflow can scan the active project directory and produce a structured project context artifact",
+        "The summary captures at least project overview, tech stack, memory-related implementation hints, retrieval-related implementation hints, orchestration flow, storage, and key files",
+        "Project context artifacts are cached locally and can be refreshed on demand",
+        "Topic-specific deep scan artifacts can be cached separately from the lightweight project summary and reused when the repository fingerprint is unchanged",
+        "Scanning avoids reading arbitrary system directories outside the configured project path",
         "Typecheck passes"
       ],
-      "priority": 11,
+      "priority": 14,
       "passes": false,
-      "notes": "Stability matters more than recall. It is acceptable to under-group if that avoids accidental cross-message merges."
+      "notes": "Favor deterministic summaries from a bounded set of files such as README, package metadata, AGENTS, and targeted source files over dumping raw source into prompts."
     },
     {
-      "id": "US-012",
-      "title": "Add Feishu source adapter",
-      "description": "As the user, I want Feishu messages to enter the same pipeline so that another collaboration tool can reuse the SourceBundle-based workflow.",
+      "id": "US-015",
+      "title": "Route project-related questions through project context",
+      "description": "As the user, I want project-specific interview questions to automatically pull in the active project context so that answers about memory, retrieval, architecture, or workers reflect the current repository.",
       "acceptanceCriteria": [
-        "Feishu inbound event payloads can be mapped into the shared SourceBundle schema",
-        "The adapter supports at least text message events and preserves provider-specific metadata for debugging",
-        "Feishu-derived bundles can reuse existing normalization, generation, archival, and reply-adjacent workflows without source-specific redesign",
-        "The adapter handles unsupported event shapes clearly instead of crashing",
+        "The answer workflow classifies whether a question needs project context, general retrieval, or both",
+        "Project-related questions include cached project context in the answer-generation prompt",
+        "Project-related questions can trigger a topic-specific deep repository scan when more implementation detail is needed",
+        "The runtime scan path can use a dedicated subagent-style scanner first and fall back to the local scanner when needed",
+        "Non-project questions continue to use the existing retrieval flow without requiring an active project",
+        "Mixed questions can use both project context and retrieved historical QA when both are relevant",
         "Typecheck passes"
       ],
-      "priority": 12,
+      "priority": 15,
       "passes": false,
-      "notes": "A minimal adapter may begin with one-shot event ingestion from a webhook payload or file-backed event sample, as long as it proves the SourceBundle reuse path."
+      "notes": "Use a stable rule-first router and only add lightweight model help where needed. Keep the integration incremental inside existing LangGraph workflows."
+    },
+    {
+      "id": "US-016",
+      "title": "Add Telegram project switching and refresh commands",
+      "description": "As the user, I want to switch or refresh the active project from Telegram so that the resident worker can stay in sync without requiring a separate local shell for every project change.",
+      "acceptanceCriteria": [
+        "The Telegram one-shot workflow recognizes exact project control commands without breaking normal content processing",
+        "A project path command can update the active project path and reply with the new selection status",
+        "A refresh command can rebuild the cached project context for the active project and report success or failure",
+        "Project control command failures are reported clearly and do not advance unrelated content bundles",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "Keep the command format explicit and conservative, similar to the retrieval mode commands."
+    },
+    {
+      "id": "US-017",
+      "title": "Document project-aware answering workflow",
+      "description": "As the user, I want the new project-context commands and behavior documented so that I can reliably use project-aware answers in the CLI and Telegram worker.",
+      "acceptanceCriteria": [
+        "README documents the active project commands, cache refresh behavior, and when project context is injected into answers",
+        "README documents the deep scan cache and local project-answer memory behavior",
+        "Documentation makes clear that the first implementation is backend-only and does not require a frontend",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Keep docs aligned with the exact commands shipped in this branch."
+    },
+    {
+      "id": "US-018",
+      "title": "Persist project specific answer memory",
+      "description": "As the user, I want project-specific answers to be recorded after generation so that future project questions can reuse prior project-aware reasoning and evidence.",
+      "acceptanceCriteria": [
+        "Project-specific generated answers are recorded with project path, fingerprint, topic, and key files",
+        "Recorded project-answer memory is stored locally and does not require a frontend or external service",
+        "Project-answer memory writing does not break non-project answer generation flows",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": "Keep the first version append-only and local-first."
     }
   ]
 }
