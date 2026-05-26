@@ -40,10 +40,10 @@ flowchart LR
 
 ## Package layout
 
-- `src/xhs_interview_answer_copilot/collectors`
-- `src/xhs_interview_answer_copilot/workflows`
-- `src/xhs_interview_answer_copilot/storage`
-- `src/xhs_interview_answer_copilot/dispatch`
+- `src/knowledge_agent/collectors`
+- `src/knowledge_agent/workflows`
+- `src/knowledge_agent/storage`
+- `src/knowledge_agent/dispatch`
 
 ## Configuration
 
@@ -108,7 +108,7 @@ After installing the package in editable mode, run:
 - `knowledge-agent telegram-worker-stop`
 - `knowledge-agent ingest-feishu-event <json_path>`
 - `knowledge-agent ingest-telegram-once`
-- or `python -m xhs_interview_answer_copilot.main status`
+- or `python -m knowledge_agent.main status`
 
 ## Playwright setup
 

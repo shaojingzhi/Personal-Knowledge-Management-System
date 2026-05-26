@@ -1,2 +1,0 @@
-[console_scripts]
-xhs-copilot = xhs_interview_answer_copilot.main:main

@@ -21,8 +21,8 @@ dependencies = [
 ]
 
 [project.scripts]
-knowledge-agent = "xhs_interview_answer_copilot.main:main"
-xhs-copilot = "xhs_interview_answer_copilot.main:main"
+knowledge-agent = "knowledge_agent.main:main"
+xhs-copilot = "knowledge_agent.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -33,7 +33,7 @@ dev = [
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-xhs_interview_answer_copilot = ["tools/*.swift"]
+knowledge_agent = ["tools/*.swift"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -41,4 +41,4 @@ where = ["src"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["xhs_interview_answer_copilot"]
+packages = ["knowledge_agent"]
